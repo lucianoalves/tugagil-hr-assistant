@@ -52,3 +52,7 @@ python -m unittest tests/smoke/test_validate_endpoint.py
 - `v0.2.0`: executable API (`/api/validate`) + baseline tests ✅
 - `v0.3.0`: auth + storage + audit trail
 - `v0.4.0`: production hardening and deployment profile
+
+## Releases
+- Changelog: `CHANGELOG.md`
+- Release notes: `docs/releases/v0.2.0.md`
