@@ -1,5 +1,8 @@
-# Redaction Module (Placeholder)
+# Redaction Module
 
-Planned responsibilities:
-- PII detection and masking
-- configurable redaction policy before LLM calls
+Implemented baseline responsibilities:
+- detect and mask email addresses
+- detect and mask phone numbers
+- detect and mask URLs
+
+Redaction is applied in `/api/validate` before any optional LLM usage.

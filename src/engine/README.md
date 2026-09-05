@@ -1,6 +1,6 @@
-# Engine Module (Placeholder)
+# Engine Module
 
-Planned responsibilities:
-- document parsing (PDF/DOCX)
-- section/contact extraction
-- deterministic ATS-style scoring pipeline
+Implemented responsibilities:
+- baseline text parsing and normalization
+- section presence detection
+- deterministic scoring (`section`, `keyword`, `completeness`, `consistency`)

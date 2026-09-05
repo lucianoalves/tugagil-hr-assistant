@@ -1,6 +1,10 @@
-# Smoke Tests (Placeholder)
+# Smoke Tests
 
-Planned checks:
-- parse sample CV
-- run deterministic scoring
-- verify output schema shape
+Current smoke check:
+- `test_validate_endpoint.py`
+
+Coverage:
+- starts local API server
+- calls `POST /api/validate`
+- verifies response shape and version
+- verifies PII redaction in response payload
