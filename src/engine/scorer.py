@@ -12,6 +12,8 @@ KEYWORDS = {
     "analysis",
 }
 
+CORE_SECTIONS = {"summary", "experience", "education", "skills"}
+
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
@@ -20,8 +22,9 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 def score_profile(parsed: dict) -> dict:
     text_blob = f"{parsed['cv_text']} {parsed['linkedin_text']}".lower()
 
-    sections_present = sum(1 for value in parsed["section_presence"].values() if value)
-    section_score = (sections_present / 4) * 100
+    section_presence = parsed.get("section_presence", {})
+    sections_present = sum(1 for section in CORE_SECTIONS if section_presence.get(section, False))
+    section_score = (sections_present / len(CORE_SECTIONS)) * 100
 
     keyword_hits = sum(1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text_blob))
     keyword_score = (keyword_hits / len(KEYWORDS)) * 100
@@ -69,4 +72,3 @@ def score_profile(parsed: dict) -> dict:
         "breakdown": breakdown,
         "recommendations": recommendations,
     }
-
