@@ -16,6 +16,7 @@ This file tracks weekly progress for portfolio visibility and execution consiste
 - Implemented PII redaction baseline (email, phone, URL).
 - Added end-to-end smoke test for validate flow.
 - Updated documentation for local run, changelog, and release notes.
+- Opened planning branch for `v0.3.0` portfolio execution and roadmap packaging.
 
 ### Evidence
 - `feat(mvp): implement v0.2.0 validate api baseline` (`8034a43`)
@@ -24,6 +25,7 @@ This file tracks weekly progress for portfolio visibility and execution consiste
 ### Notes
 - Deterministic scoring remains the source of truth.
 - LLM remains optional and limited to narrative enrichment.
+- Next actions are milestone/issue setup and `v0.3.0` scope tracking.
 
 ---
 

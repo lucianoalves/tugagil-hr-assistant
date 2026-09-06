@@ -57,3 +57,6 @@ python -m unittest tests/smoke/test_validate_endpoint.py
 - Changelog: `CHANGELOG.md`
 - Release notes: `docs/releases/v0.2.0.md`
 - Weekly worklog: `docs/worklog.md`
+
+## Planning
+- Current roadmap: `docs/ROADMAP.md`
