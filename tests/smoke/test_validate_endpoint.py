@@ -2,7 +2,7 @@ import json
 import threading
 import time
 import unittest
-from urllib import request
+from urllib import error, request
 
 from src.api.server import run_server
 
@@ -39,7 +39,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             body = json.loads(response.read().decode("utf-8"))
 
-        self.assertEqual(body["version"], "0.2.0")
+        self.assertEqual(body["version"], "0.3.0")
         self.assertIn("overall", body["score"])
         self.assertIn("breakdown", body["score"])
         self.assertIn("recommendations", body)
@@ -48,7 +48,63 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         self.assertNotIn("912 345 678", body["redaction"]["cv_text_redacted"])
         self.assertNotIn("linkedin.com/in/johndoe", body["redaction"]["linkedin_text_redacted"])
 
+    def test_validate_rejects_invalid_json_body(self) -> None:
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=b"{",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 400)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["version"], "0.3.0")
+        self.assertEqual(body["error"]["code"], "invalid_json")
+
+    def test_validate_rejects_invalid_field_types(self) -> None:
+        payload = {
+            "cv_text": ["not", "a", "string"],
+            "linkedin_text": 123,
+        }
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 400)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "invalid_payload")
+        self.assertIn("fields", body["error"]["details"])
+        self.assertIn("cv_text", body["error"]["details"]["fields"])
+        self.assertIn("linkedin_text", body["error"]["details"]["fields"])
+
+    def test_validate_requires_at_least_one_non_empty_text(self) -> None:
+        payload = {
+            "cv_text": "   ",
+            "linkedin_text": "",
+        }
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 400)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "missing_input")
+
 
 if __name__ == "__main__":
     unittest.main()
-
