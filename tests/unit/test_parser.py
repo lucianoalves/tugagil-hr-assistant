@@ -19,12 +19,16 @@ class ParserUnitTest(unittest.TestCase):
         parsed = parse_profile(cv_text=cv_text, linkedin_text=linkedin_text)
 
         self.assertGreater(parsed["word_count"], 0)
+        self.assertGreater(parsed["cv_word_count"], 0)
+        self.assertGreater(parsed["linkedin_word_count"], 0)
         self.assertTrue(parsed["section_presence"]["summary"])
         self.assertTrue(parsed["section_presence"]["experience"])
         self.assertTrue(parsed["section_presence"]["education"])
         self.assertTrue(parsed["section_presence"]["skills"])
         self.assertTrue(parsed["section_presence"]["projects"])
         self.assertTrue(parsed["section_presence"]["certifications"])
+        self.assertTrue(parsed["section_presence_cv"]["summary"])
+        self.assertTrue(parsed["section_presence_linkedin"]["projects"])
 
         self.assertIn("summary", parsed["detected_sections"])
         self.assertIn("projects", parsed["detected_sections"])

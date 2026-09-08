@@ -54,9 +54,17 @@ def parse_profile(cv_text: str, linkedin_text: str) -> dict:
 
     combined = f"{cv_normalized}\n{linkedin_normalized}".strip()
     words = re.findall(r"\b\w+\b", combined)
+    cv_words = re.findall(r"\b\w+\b", cv_normalized)
+    linkedin_words = re.findall(r"\b\w+\b", linkedin_normalized)
 
     section_presence = {
         section: bool(pattern.search(combined)) for section, pattern in SECTION_PATTERNS.items()
+    }
+    section_presence_cv = {
+        section: bool(pattern.search(cv_normalized)) for section, pattern in SECTION_PATTERNS.items()
+    }
+    section_presence_linkedin = {
+        section: bool(pattern.search(linkedin_normalized)) for section, pattern in SECTION_PATTERNS.items()
     }
     detected_sections = [section for section, present in section_presence.items() if present]
     contacts = _extract_contacts(combined)
@@ -65,7 +73,11 @@ def parse_profile(cv_text: str, linkedin_text: str) -> dict:
         "cv_text": cv_normalized,
         "linkedin_text": linkedin_normalized,
         "word_count": len(words),
+        "cv_word_count": len(cv_words),
+        "linkedin_word_count": len(linkedin_words),
         "section_presence": section_presence,
+        "section_presence_cv": section_presence_cv,
+        "section_presence_linkedin": section_presence_linkedin,
         "detected_sections": detected_sections,
         "contacts": contacts,
     }

@@ -21,6 +21,9 @@ Error contract:
 
 Output:
 - `score.overall`
+- `score.profile_scores.cv_quality`
+- `score.profile_scores.linkedin_quality`
+- `score.profile_scores.consistency`
 - `score.breakdown`
 - `recommendations`
 - redacted text fields under `redaction`

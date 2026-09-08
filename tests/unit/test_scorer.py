@@ -27,7 +27,9 @@ class ScorerUnitTest(unittest.TestCase):
 
         self.assertIn("overall", score)
         self.assertIn("breakdown", score)
+        self.assertIn("profile_scores", score)
         breakdown = score["breakdown"]
+        profile_scores = score["profile_scores"]
 
         for field in [
             "section",
@@ -43,6 +45,11 @@ class ScorerUnitTest(unittest.TestCase):
 
         self.assertGreater(breakdown["contact_readiness"], 0)
         self.assertGreater(breakdown["impact_evidence"], 0)
+        self.assertIn("cv_quality", profile_scores)
+        self.assertIn("linkedin_quality", profile_scores)
+        self.assertIn("consistency", profile_scores)
+        self.assertGreater(profile_scores["cv_quality"], 0)
+        self.assertGreater(profile_scores["linkedin_quality"], 0)
 
 
 if __name__ == "__main__":
