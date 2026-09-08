@@ -67,6 +67,7 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
         "version": APP_VERSION,
         "score": {
             "overall": score["overall"],
+            "profile_scores": score["profile_scores"],
             "breakdown": score["breakdown"],
         },
         "recommendations": score["recommendations"],

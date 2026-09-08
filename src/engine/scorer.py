@@ -47,6 +47,28 @@ def _score_impact_evidence(text_blob: str) -> float:
     return _clamp((len(hits) / 8) * 100)
 
 
+def _score_source_quality(text: str, section_presence: dict, word_count: int, word_target: int) -> float:
+    if not text.strip():
+        return 0.0
+
+    section_hits = sum(1 for section in CORE_SECTIONS if section_presence.get(section, False))
+    section_score = (section_hits / len(CORE_SECTIONS)) * 100
+
+    keyword_hits = sum(1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text.lower()))
+    keyword_score = (keyword_hits / len(KEYWORDS)) * 100
+
+    completeness_score = min(word_count / word_target, 1.0) * 100
+    impact_score = _score_impact_evidence(text.lower())
+
+    quality_score = (
+        (section_score * 0.40)
+        + (keyword_score * 0.25)
+        + (completeness_score * 0.20)
+        + (impact_score * 0.15)
+    )
+    return round(_clamp(quality_score), 2)
+
+
 def score_profile(parsed: dict) -> dict:
     text_blob = f"{parsed['cv_text']} {parsed['linkedin_text']}".lower()
 
@@ -77,6 +99,18 @@ def score_profile(parsed: dict) -> dict:
 
     contact_readiness_score = _score_contact_readiness(parsed)
     impact_score = _score_impact_evidence(text_blob)
+    cv_quality_score = _score_source_quality(
+        text=parsed["cv_text"],
+        section_presence=parsed.get("section_presence_cv", {}),
+        word_count=parsed.get("cv_word_count", 0),
+        word_target=220,
+    )
+    linkedin_quality_score = _score_source_quality(
+        text=parsed["linkedin_text"],
+        section_presence=parsed.get("section_presence_linkedin", {}),
+        word_count=parsed.get("linkedin_word_count", 0),
+        word_target=140,
+    )
 
     breakdown = {
         "section": round(_clamp(section_score), 2),
@@ -118,6 +152,11 @@ def score_profile(parsed: dict) -> dict:
 
     return {
         "overall": overall,
+        "profile_scores": {
+            "cv_quality": cv_quality_score,
+            "linkedin_quality": linkedin_quality_score,
+            "consistency": round(_clamp(consistency_score), 2),
+        },
         "breakdown": breakdown,
         "recommendations": recommendations,
     }

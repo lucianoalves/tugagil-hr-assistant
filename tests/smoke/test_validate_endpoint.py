@@ -41,7 +41,11 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
 
         self.assertEqual(body["version"], "0.3.0")
         self.assertIn("overall", body["score"])
+        self.assertIn("profile_scores", body["score"])
         self.assertIn("breakdown", body["score"])
+        self.assertIn("cv_quality", body["score"]["profile_scores"])
+        self.assertIn("linkedin_quality", body["score"]["profile_scores"])
+        self.assertIn("consistency", body["score"]["profile_scores"])
         self.assertIn("recommendations", body)
         self.assertIn("redaction", body)
         self.assertNotIn("john.doe@example.com", body["redaction"]["cv_text_redacted"])
