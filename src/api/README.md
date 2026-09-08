@@ -11,6 +11,7 @@ Validation rules:
 - Request body must be a JSON object.
 - `cv_text` and `linkedin_text` must be strings when present.
 - At least one non-empty value between `cv_text` and `linkedin_text` is required.
+- Endpoint enforces per-user/IP request limits (60 requests per 60 seconds by default).
 
 Error contract:
 - All API errors return a consistent payload shape:
@@ -18,6 +19,10 @@ Error contract:
   - `error.code`
   - `error.message`
   - `error.details` (optional)
+
+Rate-limit error:
+- `429` with `error.code = rate_limit_exceeded`
+- `error.details.retry_after_seconds` indicates when retry is allowed
 
 Output:
 - `score.overall`

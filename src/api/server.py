@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from src.engine import parse_profile, score_profile
@@ -8,6 +10,35 @@ from src.redaction import redact_pii
 
 
 APP_VERSION = "0.3.0"
+
+
+class RateLimiter:
+    def __init__(self, max_requests: int, window_seconds: int) -> None:
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._state: dict[str, tuple[float, int]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key: str) -> tuple[bool, int]:
+        if self.max_requests <= 0 or self.window_seconds <= 0:
+            return True, 0
+
+        now = time.time()
+        with self._lock:
+            window_start, count = self._state.get(key, (now, 0))
+            elapsed = now - window_start
+
+            if elapsed >= self.window_seconds:
+                window_start = now
+                count = 0
+
+            if count >= self.max_requests:
+                retry_after = max(1, int(self.window_seconds - elapsed))
+                return False, retry_after
+
+            self._state[key] = (window_start, count + 1)
+
+        return True, 0
 
 
 def _error_response(code: str, message: str, details: dict | None = None) -> dict:
@@ -79,7 +110,9 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
     return response, 200
 
 
-def create_app():
+def create_app(rate_limiter: RateLimiter | None = None):
+    limiter = rate_limiter or RateLimiter(max_requests=60, window_seconds=60)
+
     class ValidateRequestHandler(BaseHTTPRequestHandler):
         def _send_json(self, body: dict, status: int = 200) -> None:
             payload = json.dumps(body).encode("utf-8")
@@ -94,6 +127,19 @@ def create_app():
                 self._send_json(
                     _error_response(code="not_found", message="Endpoint not found."),
                     status=404,
+                )
+                return
+
+            client_key = self.headers.get("x-user-id") or self.client_address[0]
+            allowed, retry_after_seconds = limiter.check(client_key)
+            if not allowed:
+                self._send_json(
+                    _error_response(
+                        code="rate_limit_exceeded",
+                        message="Rate limit exceeded. Please retry later.",
+                        details={"retry_after_seconds": retry_after_seconds},
+                    ),
+                    status=429,
                 )
                 return
 
@@ -144,8 +190,21 @@ def create_app():
     return ValidateRequestHandler
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8000) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), create_app())
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    rate_limit_max_requests: int = 60,
+    rate_limit_window_seconds: int = 60,
+) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(
+        (host, port),
+        create_app(
+            RateLimiter(
+                max_requests=rate_limit_max_requests,
+                window_seconds=rate_limit_window_seconds,
+            )
+        ),
+    )
     return server
 
 

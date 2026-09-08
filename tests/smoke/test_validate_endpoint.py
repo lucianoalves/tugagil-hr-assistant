@@ -110,5 +110,56 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "missing_input")
 
 
+class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = run_server(port=0, rate_limit_max_requests=2, rate_limit_window_seconds=300)
+        cls.port = cls.server.server_port
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def test_validate_enforces_rate_limit_per_user(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading project delivery.",
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-user-id": "rate-limit-test-user",
+        }
+
+        for _ in range(2):
+            req = request.Request(
+                f"http://127.0.0.1:{self.port}/api/validate",
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with request.urlopen(req, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 429)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "rate_limit_exceeded")
+        self.assertIn("retry_after_seconds", body["error"]["details"])
+
+
 if __name__ == "__main__":
     unittest.main()
