@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from src.engine import parse_profile, score_profile
@@ -110,8 +112,24 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
     return response, 200
 
 
-def create_app(rate_limiter: RateLimiter | None = None):
+def _with_request_id(body: dict, request_id: str) -> dict:
+    return {
+        **body,
+        "request_id": request_id,
+    }
+
+
+def _safe_text_length(value: object) -> int:
+    return len(value.strip()) if isinstance(value, str) else 0
+
+
+def create_app(
+    rate_limiter: RateLimiter | None = None,
+    api_key: str | None = None,
+    require_user_context: bool = False,
+):
     limiter = rate_limiter or RateLimiter(max_requests=60, window_seconds=60)
+    enforced_api_key = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
 
     class ValidateRequestHandler(BaseHTTPRequestHandler):
         def _send_json(self, body: dict, status: int = 200) -> None:
@@ -123,21 +141,61 @@ def create_app(rate_limiter: RateLimiter | None = None):
             self.wfile.write(payload)
 
         def do_POST(self) -> None:
+            request_id = str(uuid.uuid4())
+
             if self.path != "/api/validate":
                 self._send_json(
-                    _error_response(code="not_found", message="Endpoint not found."),
+                    _with_request_id(
+                        _error_response(code="not_found", message="Endpoint not found."),
+                        request_id=request_id,
+                    ),
                     status=404,
                 )
                 return
 
-            client_key = self.headers.get("x-user-id") or self.client_address[0]
+            user_id = (self.headers.get("x-user-id") or "").strip()
+            user_role = (self.headers.get("x-user-role") or "").strip()
+            user_plan = (self.headers.get("x-user-plan") or "").strip()
+
+            if enforced_api_key:
+                provided_api_key = (self.headers.get("x-api-key") or "").strip()
+                if provided_api_key != enforced_api_key:
+                    self._send_json(
+                        _with_request_id(
+                            _error_response(
+                                code="unauthorized",
+                                message="Missing or invalid API key.",
+                            ),
+                            request_id=request_id,
+                        ),
+                        status=401,
+                    )
+                    return
+
+            if require_user_context and not user_id:
+                self._send_json(
+                    _with_request_id(
+                        _error_response(
+                            code="missing_user_context",
+                            message="x-user-id header is required for this environment.",
+                        ),
+                        request_id=request_id,
+                    ),
+                    status=400,
+                )
+                return
+
+            client_key = user_id or self.client_address[0]
             allowed, retry_after_seconds = limiter.check(client_key)
             if not allowed:
                 self._send_json(
-                    _error_response(
-                        code="rate_limit_exceeded",
-                        message="Rate limit exceeded. Please retry later.",
-                        details={"retry_after_seconds": retry_after_seconds},
+                    _with_request_id(
+                        _error_response(
+                            code="rate_limit_exceeded",
+                            message="Rate limit exceeded. Please retry later.",
+                            details={"retry_after_seconds": retry_after_seconds},
+                        ),
+                        request_id=request_id,
                     ),
                     status=429,
                 )
@@ -147,9 +205,12 @@ def create_app(rate_limiter: RateLimiter | None = None):
                 content_length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 self._send_json(
-                    _error_response(
-                        code="invalid_content_length",
-                        message="Invalid Content-Length header.",
+                    _with_request_id(
+                        _error_response(
+                            code="invalid_content_length",
+                            message="Invalid Content-Length header.",
+                        ),
+                        request_id=request_id,
                     ),
                     status=400,
                 )
@@ -160,24 +221,54 @@ def create_app(rate_limiter: RateLimiter | None = None):
                 payload = json.loads(raw_body.decode("utf-8") or "{}")
             except json.JSONDecodeError:
                 self._send_json(
-                    _error_response(code="invalid_json", message="Invalid JSON body."),
+                    _with_request_id(
+                        _error_response(code="invalid_json", message="Invalid JSON body."),
+                        request_id=request_id,
+                    ),
                     status=400,
                 )
                 return
 
             if not isinstance(payload, dict):
                 self._send_json(
-                    _error_response(code="invalid_payload", message="JSON body must be an object."),
+                    _with_request_id(
+                        _error_response(code="invalid_payload", message="JSON body must be an object."),
+                        request_id=request_id,
+                    ),
                     status=400,
                 )
                 return
 
             response_body, status = validate_payload(payload)
-            self._send_json(response_body, status=status)
+            response_with_request_id = _with_request_id(response_body, request_id=request_id)
+            self._send_json(response_with_request_id, status=status)
+
+            audit_event = {
+                "request_id": request_id,
+                "route": self.path,
+                "status": status,
+                "user_id": user_id or None,
+                "user_role": user_role or None,
+                "user_plan": user_plan or None,
+                "cv_chars": _safe_text_length(payload.get("cv_text")),
+                "linkedin_chars": _safe_text_length(payload.get("linkedin_text")),
+                "timestamp": int(time.time()),
+            }
+            print(json.dumps({"event": "validate_request", **audit_event}))
 
         def do_GET(self) -> None:
             if self.path == "/health":
-                self._send_json({"status": "ok", "version": APP_VERSION}, status=200)
+                self._send_json(
+                    {
+                        "status": "ok",
+                        "version": APP_VERSION,
+                        "auth": {
+                            "api_key_required": bool(enforced_api_key),
+                            "require_user_context": require_user_context,
+                        },
+                    },
+                    status=200,
+                )
                 return
             self._send_json(
                 _error_response(code="not_found", message="Endpoint not found."),
@@ -195,14 +286,30 @@ def run_server(
     port: int = 8000,
     rate_limit_max_requests: int = 60,
     rate_limit_window_seconds: int = 60,
+    api_key: str | None = None,
+    require_user_context: bool | None = None,
 ) -> ThreadingHTTPServer:
+    configured_api_key = api_key
+    if configured_api_key is None:
+        configured_api_key = os.getenv("TUGAAGIL_API_KEY")
+
+    configured_require_user_context = require_user_context
+    if configured_require_user_context is None:
+        configured_require_user_context = os.getenv("TUGAAGIL_REQUIRE_USER_CONTEXT", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
     server = ThreadingHTTPServer(
         (host, port),
         create_app(
             RateLimiter(
                 max_requests=rate_limit_max_requests,
                 window_seconds=rate_limit_window_seconds,
-            )
+            ),
+            api_key=configured_api_key,
+            require_user_context=configured_require_user_context,
         ),
     )
     return server

@@ -161,5 +161,89 @@ class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
         self.assertIn("retry_after_seconds", body["error"]["details"])
 
 
+class ValidateEndpointAuthSmokeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = run_server(port=0, api_key="test-secret", require_user_context=True)
+        cls.port = cls.server.server_port
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def test_validate_rejects_missing_api_key(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "x-user-id": "auth-user-1"},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 401)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "unauthorized")
+        self.assertIn("request_id", body)
+
+    def test_validate_rejects_missing_user_context_when_required(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "x-api-key": "test-secret"},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 400)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "missing_user_context")
+        self.assertIn("request_id", body)
+
+    def test_validate_accepts_valid_api_key_and_user_context(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": "test-secret",
+                "x-user-id": "auth-user-1",
+                "x-user-role": "admin",
+                "x-user-plan": "associate",
+            },
+            method="POST",
+        )
+
+        with request.urlopen(req, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertIn("request_id", body)
+        self.assertIn("score", body)
+
+
 if __name__ == "__main__":
     unittest.main()
