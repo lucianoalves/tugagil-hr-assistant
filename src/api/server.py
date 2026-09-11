@@ -8,6 +8,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from src.engine import parse_profile, score_profile
+from src.engine.scorer import ScoringConfigurationError
 from src.redaction import redact_pii
 
 
@@ -91,7 +92,13 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
         return validation_error, 400
 
     parsed = parse_profile(cv_text=cv_text, linkedin_text=linkedin_text)
-    score = score_profile(parsed)
+    try:
+        score = score_profile(parsed)
+    except ScoringConfigurationError as exc:
+        return _error_response(
+            code="scoring_configuration_error",
+            message=str(exc),
+        ), 500
 
     cv_redacted = redact_pii(parsed["cv_text"])
     linkedin_redacted = redact_pii(parsed["linkedin_text"])
@@ -102,6 +109,7 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
             "overall": score["overall"],
             "profile_scores": score["profile_scores"],
             "breakdown": score["breakdown"],
+            "weight_source": score["weight_source"],
         },
         "recommendations": score["recommendations"],
         "redaction": {
