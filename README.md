@@ -48,6 +48,25 @@ Run smoke test:
 python -m unittest tests/smoke/test_validate_endpoint.py
 ```
 
+## Runtime Configuration
+- `TUGAAGIL_API_KEY`: if set, requests to `POST /api/validate` must include matching `x-api-key`.
+- `TUGAAGIL_REQUIRE_USER_CONTEXT`: when `true`, `x-user-id` header is required.
+
+Example secured request:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/validate \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: local-dev-secret" \
+  -H "x-user-id: user-123" \
+  -H "x-user-role: free" \
+  -H "x-user-plan: free" \
+  -d '{
+    "cv_text": "Summary... Experience... Skills...",
+    "linkedin_text": "Experience... Skills..."
+  }'
+```
+
 ## Roadmap
 - `v0.2.0`: executable API (`/api/validate`) + baseline tests ✅
 - `v0.3.0`: auth + storage + audit trail

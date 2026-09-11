@@ -11,6 +11,7 @@ Coverage:
 - verifies invalid JSON is rejected with deterministic error code
 - verifies invalid payload field types are rejected
 - verifies at least one non-empty input is required
+- verifies per-user rate limiting and deterministic `429` payload
 
 Run commands:
 - `python -m unittest tests/smoke/test_validate_endpoint.py`
