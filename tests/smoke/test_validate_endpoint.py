@@ -2,9 +2,11 @@ import json
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib import error, request
 
 from src.api.server import run_server
+from src.engine.scorer import reset_overall_weights_cache
 
 
 class ValidateEndpointSmokeTest(unittest.TestCase):
@@ -43,6 +45,8 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         self.assertIn("overall", body["score"])
         self.assertIn("profile_scores", body["score"])
         self.assertIn("breakdown", body["score"])
+        self.assertIn("weight_source", body["score"])
+        self.assertEqual(body["score"]["weight_source"], "default")
         self.assertIn("cv_quality", body["score"]["profile_scores"])
         self.assertIn("linkedin_quality", body["score"]["profile_scores"])
         self.assertIn("consistency", body["score"]["profile_scores"])
@@ -243,6 +247,57 @@ class ValidateEndpointAuthSmokeTest(unittest.TestCase):
 
         self.assertIn("request_id", body)
         self.assertIn("score", body)
+
+
+class ValidateEndpointScoringConfigSmokeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.invalid_weights = (
+            '{"section_core":0.25,"structure_depth":0.1,"keyword":0.2,'
+            '"completeness":0.15,"consistency":0.15,"contact_readiness":0.1}'
+        )
+        cls.env_patch = patch.dict(
+            "os.environ",
+            {"TUGAAGIL_SCORING_WEIGHTS_JSON": cls.invalid_weights},
+            clear=False,
+        )
+        cls.env_patch.start()
+        reset_overall_weights_cache()
+
+        cls.server = run_server(port=0)
+        cls.port = cls.server.server_port
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+        cls.env_patch.stop()
+        reset_overall_weights_cache()
+
+    def test_validate_returns_configuration_error_for_invalid_weights(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 500)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "scoring_configuration_error")
+        self.assertIn("request_id", body)
 
 
 if __name__ == "__main__":

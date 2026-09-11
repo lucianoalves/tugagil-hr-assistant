@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+from functools import lru_cache
 
 
 KEYWORDS = {
@@ -15,6 +18,30 @@ KEYWORDS = {
 CORE_SECTIONS = {"summary", "experience", "education", "skills"}
 OPTIONAL_SECTIONS = {"projects", "certifications", "achievements", "languages", "volunteering"}
 IMPACT_PATTERN = re.compile(r"\b(?:\d+%|\d+[kKmM]?|increased|reduced|improved|delivered|launched)\b")
+
+WEIGHT_KEYS = (
+    "section_core",
+    "structure_depth",
+    "keyword",
+    "completeness",
+    "consistency",
+    "contact_readiness",
+    "impact_evidence",
+)
+
+DEFAULT_OVERALL_WEIGHTS = {
+    "section_core": 0.25,
+    "structure_depth": 0.10,
+    "keyword": 0.20,
+    "completeness": 0.15,
+    "consistency": 0.15,
+    "contact_readiness": 0.10,
+    "impact_evidence": 0.05,
+}
+
+
+class ScoringConfigurationError(ValueError):
+    pass
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -69,7 +96,87 @@ def _score_source_quality(text: str, section_presence: dict, word_count: int, wo
     return round(_clamp(quality_score), 2)
 
 
-def score_profile(parsed: dict) -> dict:
+def _validate_overall_weights(raw_weights: dict, source: str) -> dict:
+    if not isinstance(raw_weights, dict):
+        raise ScoringConfigurationError(f"Scoring weights in {source} must be a JSON object.")
+
+    expected_keys = set(WEIGHT_KEYS)
+    provided_keys = set(raw_weights.keys())
+
+    missing_keys = expected_keys - provided_keys
+    unexpected_keys = provided_keys - expected_keys
+    if missing_keys or unexpected_keys:
+        details = []
+        if missing_keys:
+            details.append(f"missing keys: {sorted(missing_keys)}")
+        if unexpected_keys:
+            details.append(f"unexpected keys: {sorted(unexpected_keys)}")
+        raise ScoringConfigurationError(f"Invalid scoring weights keys in {source}: {'; '.join(details)}")
+
+    normalized_weights = {}
+    for key in WEIGHT_KEYS:
+        value = raw_weights[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ScoringConfigurationError(f"Scoring weight '{key}' in {source} must be a number.")
+
+        numeric_value = float(value)
+        if numeric_value < 0 or numeric_value > 1:
+            raise ScoringConfigurationError(f"Scoring weight '{key}' in {source} must be between 0 and 1.")
+
+        normalized_weights[key] = numeric_value
+
+    total = sum(normalized_weights.values())
+    if abs(total - 1.0) > 0.001:
+        raise ScoringConfigurationError(
+            f"Scoring weights in {source} must sum to 1.0 (current: {round(total, 4)})."
+        )
+
+    return normalized_weights
+
+
+@lru_cache(maxsize=1)
+def _load_overall_weights() -> tuple[dict, str]:
+    weights_json = os.getenv("TUGAAGIL_SCORING_WEIGHTS_JSON", "").strip()
+    if weights_json:
+        try:
+            parsed_json = json.loads(weights_json)
+        except json.JSONDecodeError as exc:
+            raise ScoringConfigurationError("Invalid JSON in TUGAAGIL_SCORING_WEIGHTS_JSON.") from exc
+        return _validate_overall_weights(parsed_json, "TUGAAGIL_SCORING_WEIGHTS_JSON"), "env_json"
+
+    weights_file = os.getenv("TUGAAGIL_SCORING_WEIGHTS_FILE", "").strip()
+    if weights_file:
+        try:
+            with open(weights_file, "r", encoding="utf-8") as file_handle:
+                parsed_file = json.load(file_handle)
+        except FileNotFoundError as exc:
+            raise ScoringConfigurationError(
+                f"Scoring weights file not found: {weights_file}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise ScoringConfigurationError(
+                f"Invalid JSON in scoring weights file: {weights_file}"
+            ) from exc
+        return _validate_overall_weights(parsed_file, f"file:{weights_file}"), "file"
+
+    return DEFAULT_OVERALL_WEIGHTS.copy(), "default"
+
+
+def get_overall_weights() -> dict:
+    weights, _ = _load_overall_weights()
+    return dict(weights)
+
+
+def get_overall_weights_source() -> str:
+    _, source = _load_overall_weights()
+    return source
+
+
+def reset_overall_weights_cache() -> None:
+    _load_overall_weights.cache_clear()
+
+
+def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
     text_blob = f"{parsed['cv_text']} {parsed['linkedin_text']}".lower()
 
     section_presence = parsed.get("section_presence", {})
@@ -123,16 +230,9 @@ def score_profile(parsed: dict) -> dict:
         "impact_evidence": round(impact_score, 2),
     }
 
-    overall = round(
-        (breakdown["section_core"] * 0.25)
-        + (breakdown["structure_depth"] * 0.10)
-        + (breakdown["keyword"] * 0.20)
-        + (breakdown["completeness"] * 0.15)
-        + (breakdown["consistency"] * 0.15)
-        + (breakdown["contact_readiness"] * 0.10)
-        + (breakdown["impact_evidence"] * 0.05),
-        2,
-    )
+    weights = get_overall_weights() if overall_weights is None else _validate_overall_weights(overall_weights, "argument")
+
+    overall = round(sum(breakdown[key] * weights[key] for key in WEIGHT_KEYS), 2)
 
     recommendations = []
     if breakdown["section_core"] < 75:
@@ -158,5 +258,6 @@ def score_profile(parsed: dict) -> dict:
             "consistency": round(_clamp(consistency_score), 2),
         },
         "breakdown": breakdown,
+        "weight_source": get_overall_weights_source() if overall_weights is None else "argument",
         "recommendations": recommendations,
     }

@@ -6,3 +6,4 @@ Implemented responsibilities:
 - contact extraction (email, phone, LinkedIn, GitHub)
 - deterministic scoring (`section_core`, `structure_depth`, `keyword`, `completeness`, `consistency`, `contact_readiness`, `impact_evidence`)
 - profile-level deterministic sub-scores (`cv_quality`, `linkedin_quality`, `consistency`)
+- configurable overall scoring weights with strict key/range/sum validation

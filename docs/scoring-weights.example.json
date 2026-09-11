@@ -1,0 +1,9 @@
+{
+  "section_core": 0.25,
+  "structure_depth": 0.1,
+  "keyword": 0.2,
+  "completeness": 0.15,
+  "consistency": 0.15,
+  "contact_readiness": 0.1,
+  "impact_evidence": 0.05
+}
