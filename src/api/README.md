@@ -23,6 +23,7 @@ Error contract:
   - `error.message`
 - `error.details` (optional)
 - `request_id` (always present on `/api/validate`, success and error)
+- `500` with `error.code = scoring_configuration_error` when runtime scoring weights are misconfigured
 
 Rate-limit error:
 - `429` with `error.code = rate_limit_exceeded`
@@ -34,9 +35,13 @@ Auth errors:
 
 Output:
 - `score.overall`
-- `score.profile_scores.cv_quality`
-- `score.profile_scores.linkedin_quality`
-- `score.profile_scores.consistency`
-- `score.breakdown`
+- `score.modules.cv_quality.overall`
+- `score.modules.cv_quality.dimensions`
+- `score.modules.linkedin_quality.overall`
+- `score.modules.linkedin_quality.dimensions`
+- `score.modules.consistency.overall`
+- `score.modules.consistency.dimensions`
+- `score.weights.source` (`default`, `file`, `env_json`)
+- `score.weights.values`
 - `recommendations`
 - redacted text fields under `redaction`

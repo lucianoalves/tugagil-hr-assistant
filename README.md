@@ -3,7 +3,7 @@
 Production-minded HR assistant focused on CV + LinkedIn validation, deterministic scoring, explainability, and safe AI-assisted feedback.
 
 ## Status
-`v0.2.0` — minimum executable API baseline.
+`v0.3.0` — deterministic scoring modules and API hardening in progress.
 
 ## MVP Scope (V1)
 - CV quality analysis
@@ -51,6 +51,31 @@ python -m unittest tests/smoke/test_validate_endpoint.py
 ## Runtime Configuration
 - `TUGAAGIL_API_KEY`: if set, requests to `POST /api/validate` must include matching `x-api-key`.
 - `TUGAAGIL_REQUIRE_USER_CONTEXT`: when `true`, `x-user-id` header is required.
+- `TUGAAGIL_SCORING_WEIGHTS_FILE`: optional JSON file path with deterministic overall weights.
+- `TUGAAGIL_SCORING_WEIGHTS_JSON`: optional inline JSON override for deterministic overall weights.
+
+Scoring weights must define all keys and sum to `1.0`:
+- `cv_quality`
+- `linkedin_quality`
+- `consistency`
+
+If weights are invalid, `POST /api/validate` returns `500` with `error.code = scoring_configuration_error`.
+
+Reference example: `docs/scoring-weights.example.json`.
+
+## API Score Contract
+- `score.overall`
+- `score.modules.cv_quality.overall`
+- `score.modules.cv_quality.dimensions`
+- `score.modules.linkedin_quality.overall`
+- `score.modules.linkedin_quality.dimensions`
+- `score.modules.consistency.overall`
+- `score.modules.consistency.dimensions`
+- `score.weights.source`
+- `score.weights.values`
+
+## Compliance
+- LinkedIn no-scraping and retention/deletion draft: `docs/COMPLIANCE_POLICY.md`
 
 Example secured request:
 
@@ -69,7 +94,7 @@ curl -X POST http://127.0.0.1:8000/api/validate \
 
 ## Roadmap
 - `v0.2.0`: executable API (`/api/validate`) + baseline tests ✅
-- `v0.3.0`: auth + storage + audit trail
+- `v0.3.0`: deterministic scoring depth + compliance hardening
 - `v0.4.0`: production hardening and deployment profile
 
 ## Releases
