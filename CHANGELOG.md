@@ -7,11 +7,16 @@ All notable changes to this project are documented in this file.
 ### Added
 - Runtime-configurable deterministic scoring weights via `TUGAAGIL_SCORING_WEIGHTS_FILE` or `TUGAAGIL_SCORING_WEIGHTS_JSON`.
 - Strict scoring configuration validation (required keys, numeric bounds, and sum-to-1.0 guard).
-- `score.weight_source` field in `/api/validate` responses.
-- Smoke and unit coverage for scoring configuration behavior.
+- Dedicated deterministic LinkedIn quality module with explainable dimensions.
+- Deeper deterministic CV/LinkedIn consistency module (roles, skills, projects, timeline).
+- Parser signal extraction for role, skill, project, and year alignment.
+- `score.modules` and `score.weights` contract in `/api/validate` responses.
+- Compliance policy draft with no-scraping and 180-day retention/deletion guidance.
+- Expanded smoke and unit coverage for parser/scorer and scoring configuration behavior.
 
 ### Changed
 - `POST /api/validate` now returns deterministic `500` with `error.code = scoring_configuration_error` when scoring weights are misconfigured.
+- Replaced legacy score payload fields (`profile_scores`, `breakdown`) with module-oriented output.
 
 ## [0.2.0] - 2026-09-05
 

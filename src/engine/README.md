@@ -4,6 +4,6 @@ Implemented responsibilities:
 - baseline text parsing and normalization
 - section presence detection with multi-alias coverage
 - contact extraction (email, phone, LinkedIn, GitHub)
-- deterministic scoring (`section_core`, `structure_depth`, `keyword`, `completeness`, `consistency`, `contact_readiness`, `impact_evidence`)
-- profile-level deterministic sub-scores (`cv_quality`, `linkedin_quality`, `consistency`)
+- parser signal extraction for deterministic consistency checks (roles, skills, projects, years)
+- deterministic module scoring (`cv_quality`, `linkedin_quality`, `consistency`) with per-module dimensions
 - configurable overall scoring weights with strict key/range/sum validation

@@ -24,10 +24,10 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=2)
 
-    def test_validate_returns_score_and_redacted_output(self) -> None:
+    def test_validate_returns_module_score_contract_and_redaction(self) -> None:
         payload = {
-            "cv_text": "Summary Python API development. Email john.doe@example.com Phone +351 912 345 678",
-            "linkedin_text": "Experience leading project delivery. Skills Python SQL. https://linkedin.com/in/johndoe",
+            "cv_text": "Summary Python API development 2019-2023. Email john.doe@example.com Phone +351 912 345 678",
+            "linkedin_text": "Summary Lead Engineer. Experience 2020-2023 project delivery. Skills Python SQL. https://linkedin.com/in/johndoe",
         }
 
         req = request.Request(
@@ -43,15 +43,23 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
 
         self.assertEqual(body["version"], "0.3.0")
         self.assertIn("overall", body["score"])
-        self.assertIn("profile_scores", body["score"])
-        self.assertIn("breakdown", body["score"])
-        self.assertIn("weight_source", body["score"])
-        self.assertEqual(body["score"]["weight_source"], "default")
-        self.assertIn("cv_quality", body["score"]["profile_scores"])
-        self.assertIn("linkedin_quality", body["score"]["profile_scores"])
-        self.assertIn("consistency", body["score"]["profile_scores"])
+        self.assertIn("modules", body["score"])
+        self.assertIn("weights", body["score"])
+
+        modules = body["score"]["modules"]
+        self.assertIn("cv_quality", modules)
+        self.assertIn("linkedin_quality", modules)
+        self.assertIn("consistency", modules)
+        self.assertIn("dimensions", modules["cv_quality"])
+        self.assertIn("dimensions", modules["linkedin_quality"])
+        self.assertIn("dimensions", modules["consistency"])
+
+        self.assertEqual(body["score"]["weights"]["source"], "default")
+        self.assertIn("values", body["score"]["weights"])
+
         self.assertIn("recommendations", body)
         self.assertIn("redaction", body)
+        self.assertIn("request_id", body)
         self.assertNotIn("john.doe@example.com", body["redaction"]["cv_text_redacted"])
         self.assertNotIn("912 345 678", body["redaction"]["cv_text_redacted"])
         self.assertNotIn("linkedin.com/in/johndoe", body["redaction"]["linkedin_text_redacted"])
@@ -129,10 +137,10 @@ class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=2)
 
-    def test_validate_enforces_rate_limit_per_user(self) -> None:
+    def test_validate_applies_rate_limit_per_user_header(self) -> None:
         payload = {
             "cv_text": "Summary Python API development.",
-            "linkedin_text": "Experience leading project delivery.",
+            "linkedin_text": "Experience leading delivery.",
         }
         headers = {
             "Content-Type": "application/json",
@@ -252,10 +260,7 @@ class ValidateEndpointAuthSmokeTest(unittest.TestCase):
 class ValidateEndpointScoringConfigSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.invalid_weights = (
-            '{"section_core":0.25,"structure_depth":0.1,"keyword":0.2,'
-            '"completeness":0.15,"consistency":0.15,"contact_readiness":0.1}'
-        )
+        cls.invalid_weights = '{"cv_quality":0.5,"linkedin_quality":0.5}'
         cls.env_patch = patch.dict(
             "os.environ",
             {"TUGAAGIL_SCORING_WEIGHTS_JSON": cls.invalid_weights},

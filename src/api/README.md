@@ -35,10 +35,13 @@ Auth errors:
 
 Output:
 - `score.overall`
-- `score.profile_scores.cv_quality`
-- `score.profile_scores.linkedin_quality`
-- `score.profile_scores.consistency`
-- `score.breakdown`
-- `score.weight_source` (`default`, `file`, `env_json`)
+- `score.modules.cv_quality.overall`
+- `score.modules.cv_quality.dimensions`
+- `score.modules.linkedin_quality.overall`
+- `score.modules.linkedin_quality.dimensions`
+- `score.modules.consistency.overall`
+- `score.modules.consistency.dimensions`
+- `score.weights.source` (`default`, `file`, `env_json`)
+- `score.weights.values`
 - `recommendations`
 - redacted text fields under `redaction`

@@ -20,23 +20,15 @@ OPTIONAL_SECTIONS = {"projects", "certifications", "achievements", "languages", 
 IMPACT_PATTERN = re.compile(r"\b(?:\d+%|\d+[kKmM]?|increased|reduced|improved|delivered|launched)\b")
 
 WEIGHT_KEYS = (
-    "section_core",
-    "structure_depth",
-    "keyword",
-    "completeness",
+    "cv_quality",
+    "linkedin_quality",
     "consistency",
-    "contact_readiness",
-    "impact_evidence",
 )
 
 DEFAULT_OVERALL_WEIGHTS = {
-    "section_core": 0.25,
-    "structure_depth": 0.10,
-    "keyword": 0.20,
-    "completeness": 0.15,
-    "consistency": 0.15,
-    "contact_readiness": 0.10,
-    "impact_evidence": 0.05,
+    "cv_quality": 0.40,
+    "linkedin_quality": 0.30,
+    "consistency": 0.30,
 }
 
 
@@ -67,11 +59,35 @@ def _score_contact_readiness(parsed: dict) -> float:
     return _clamp(score)
 
 
+def _score_profile_readiness(parsed: dict) -> float:
+    linkedin_urls = parsed.get("contacts", {}).get("linkedin_urls", [])
+    roles = parsed.get("role_signals_linkedin", [])
+    skills = parsed.get("skill_signals_linkedin", [])
+
+    score = 0.0
+    if linkedin_urls:
+        score += 40.0
+    if roles:
+        score += 30.0
+    if skills:
+        score += 30.0
+
+    return _clamp(score)
+
+
 def _score_impact_evidence(text_blob: str) -> float:
     hits = IMPACT_PATTERN.findall(text_blob)
     if not hits:
         return 0.0
     return _clamp((len(hits) / 8) * 100)
+
+
+def _keyword_score(text: str) -> float:
+    if not text.strip():
+        return 0.0
+
+    keyword_hits = sum(1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text.lower()))
+    return (keyword_hits / len(KEYWORDS)) * 100
 
 
 def _score_source_quality(text: str, section_presence: dict, word_count: int, word_target: int) -> float:
@@ -80,10 +96,7 @@ def _score_source_quality(text: str, section_presence: dict, word_count: int, wo
 
     section_hits = sum(1 for section in CORE_SECTIONS if section_presence.get(section, False))
     section_score = (section_hits / len(CORE_SECTIONS)) * 100
-
-    keyword_hits = sum(1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text.lower()))
-    keyword_score = (keyword_hits / len(KEYWORDS)) * 100
-
+    keyword_score = _keyword_score(text)
     completeness_score = min(word_count / word_target, 1.0) * 100
     impact_score = _score_impact_evidence(text.lower())
 
@@ -94,6 +107,38 @@ def _score_source_quality(text: str, section_presence: dict, word_count: int, wo
         + (impact_score * 0.15)
     )
     return round(_clamp(quality_score), 2)
+
+
+def _overlap_ratio(left: list[str], right: list[str]) -> float:
+    left_set = {item.lower() for item in left}
+    right_set = {item.lower() for item in right}
+
+    if not left_set or not right_set:
+        return 0.0
+
+    overlap = len(left_set.intersection(right_set))
+    base = min(len(left_set), len(right_set))
+    return (overlap / base) * 100
+
+
+def _timeline_alignment_score(cv_years: list[int], linkedin_years: list[int]) -> float:
+    if not cv_years or not linkedin_years:
+        return 0.0
+
+    cv_min, cv_max = min(cv_years), max(cv_years)
+    linkedin_min, linkedin_max = min(linkedin_years), max(linkedin_years)
+
+    overlap_start = max(cv_min, linkedin_min)
+    overlap_end = min(cv_max, linkedin_max)
+    if overlap_end < overlap_start:
+        return 0.0
+
+    overlap_span = overlap_end - overlap_start + 1
+    cv_span = cv_max - cv_min + 1
+    linkedin_span = linkedin_max - linkedin_min + 1
+    base = min(cv_span, linkedin_span)
+
+    return _clamp((overlap_span / base) * 100)
 
 
 def _validate_overall_weights(raw_weights: dict, source: str) -> dict:
@@ -176,88 +221,160 @@ def reset_overall_weights_cache() -> None:
     _load_overall_weights.cache_clear()
 
 
-def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
-    text_blob = f"{parsed['cv_text']} {parsed['linkedin_text']}".lower()
-
+def _score_cv_quality(parsed: dict) -> tuple[float, dict]:
     section_presence = parsed.get("section_presence", {})
     sections_present = sum(1 for section in CORE_SECTIONS if section_presence.get(section, False))
-    section_score = (sections_present / len(CORE_SECTIONS)) * 100
+    section_core_score = (sections_present / len(CORE_SECTIONS)) * 100
 
     optional_sections_present = sum(
         1 for section in OPTIONAL_SECTIONS if section_presence.get(section, False)
     )
     structure_depth_score = (optional_sections_present / len(OPTIONAL_SECTIONS)) * 100
 
-    keyword_hits = sum(1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text_blob))
-    keyword_score = (keyword_hits / len(KEYWORDS)) * 100
-
-    target_words = 350
-    size_factor = min(parsed["word_count"] / target_words, 1.0)
-    completeness_score = size_factor * 100
-
-    cv_tokens = set(re.findall(r"\b[a-zA-Z]{3,}\b", parsed["cv_text"].lower()))
-    linkedin_tokens = set(re.findall(r"\b[a-zA-Z]{3,}\b", parsed["linkedin_text"].lower()))
-    if not cv_tokens or not linkedin_tokens:
-        consistency_score = 0.0
-    else:
-        overlap = len(cv_tokens.intersection(linkedin_tokens))
-        base = min(len(cv_tokens), len(linkedin_tokens))
-        consistency_score = (overlap / base) * 100
-
+    keyword_score = _keyword_score(parsed.get("cv_text", ""))
+    completeness_score = min(parsed.get("cv_word_count", 0) / 220, 1.0) * 100
+    impact_evidence_score = _score_impact_evidence(parsed.get("cv_text", "").lower())
     contact_readiness_score = _score_contact_readiness(parsed)
-    impact_score = _score_impact_evidence(text_blob)
-    cv_quality_score = _score_source_quality(
-        text=parsed["cv_text"],
-        section_presence=parsed.get("section_presence_cv", {}),
-        word_count=parsed.get("cv_word_count", 0),
-        word_target=220,
-    )
-    linkedin_quality_score = _score_source_quality(
-        text=parsed["linkedin_text"],
-        section_presence=parsed.get("section_presence_linkedin", {}),
-        word_count=parsed.get("linkedin_word_count", 0),
-        word_target=140,
+
+    dimensions = {
+        "section_core": round(_clamp(section_core_score), 2),
+        "structure_depth": round(_clamp(structure_depth_score), 2),
+        "keyword_relevance": round(_clamp(keyword_score), 2),
+        "completeness": round(_clamp(completeness_score), 2),
+        "impact_evidence": round(_clamp(impact_evidence_score), 2),
+        "contact_readiness": round(_clamp(contact_readiness_score), 2),
+    }
+
+    overall = round(
+        (dimensions["section_core"] * 0.25)
+        + (dimensions["structure_depth"] * 0.10)
+        + (dimensions["keyword_relevance"] * 0.20)
+        + (dimensions["completeness"] * 0.15)
+        + (dimensions["impact_evidence"] * 0.20)
+        + (dimensions["contact_readiness"] * 0.10),
+        2,
     )
 
-    breakdown = {
-        "section": round(_clamp(section_score), 2),
-        "section_core": round(_clamp(section_score), 2),
-        "structure_depth": round(_clamp(structure_depth_score), 2),
-        "keyword": round(_clamp(keyword_score), 2),
+    return overall, dimensions
+
+
+def _score_linkedin_quality(parsed: dict) -> tuple[float, dict]:
+    linkedin_text = parsed.get("linkedin_text", "")
+    linkedin_section_presence = parsed.get("section_presence_linkedin", {})
+
+    structure_hits = sum(
+        1 for section in ("summary", "experience", "skills") if linkedin_section_presence.get(section, False)
+    )
+    structure_coverage_score = (structure_hits / 3) * 100
+
+    keyword_relevance_score = _keyword_score(linkedin_text)
+    impact_evidence_score = _score_impact_evidence(linkedin_text.lower())
+    completeness_score = min(parsed.get("linkedin_word_count", 0) / 140, 1.0) * 100
+    profile_readiness_score = _score_profile_readiness(parsed)
+
+    dimensions = {
+        "structure_coverage": round(_clamp(structure_coverage_score), 2),
+        "keyword_relevance": round(_clamp(keyword_relevance_score), 2),
+        "impact_evidence": round(_clamp(impact_evidence_score), 2),
         "completeness": round(_clamp(completeness_score), 2),
-        "consistency": round(_clamp(consistency_score), 2),
-        "contact_readiness": round(contact_readiness_score, 2),
-        "impact_evidence": round(impact_score, 2),
+        "profile_readiness": round(_clamp(profile_readiness_score), 2),
     }
+
+    overall = round(
+        (dimensions["structure_coverage"] * 0.25)
+        + (dimensions["keyword_relevance"] * 0.25)
+        + (dimensions["impact_evidence"] * 0.20)
+        + (dimensions["completeness"] * 0.15)
+        + (dimensions["profile_readiness"] * 0.15),
+        2,
+    )
+
+    return overall, dimensions
+
+
+def _score_consistency(parsed: dict) -> tuple[float, dict]:
+    role_alignment = _overlap_ratio(
+        parsed.get("role_signals_cv", []),
+        parsed.get("role_signals_linkedin", []),
+    )
+    skills_overlap = _overlap_ratio(
+        parsed.get("skill_signals_cv", []),
+        parsed.get("skill_signals_linkedin", []),
+    )
+    project_alignment = _overlap_ratio(
+        parsed.get("project_signals_cv", []),
+        parsed.get("project_signals_linkedin", []),
+    )
+    timeline_alignment = _timeline_alignment_score(
+        parsed.get("years_cv", []),
+        parsed.get("years_linkedin", []),
+    )
+
+    dimensions = {
+        "role_alignment": round(_clamp(role_alignment), 2),
+        "skills_overlap": round(_clamp(skills_overlap), 2),
+        "project_alignment": round(_clamp(project_alignment), 2),
+        "timeline_alignment": round(_clamp(timeline_alignment), 2),
+    }
+
+    overall = round(
+        (dimensions["role_alignment"] * 0.30)
+        + (dimensions["skills_overlap"] * 0.35)
+        + (dimensions["project_alignment"] * 0.20)
+        + (dimensions["timeline_alignment"] * 0.15),
+        2,
+    )
+
+    return overall, dimensions
+
+
+def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
+    cv_quality_overall, cv_quality_dimensions = _score_cv_quality(parsed)
+    linkedin_quality_overall, linkedin_quality_dimensions = _score_linkedin_quality(parsed)
+    consistency_overall, consistency_dimensions = _score_consistency(parsed)
 
     weights = get_overall_weights() if overall_weights is None else _validate_overall_weights(overall_weights, "argument")
 
-    overall = round(sum(breakdown[key] * weights[key] for key in WEIGHT_KEYS), 2)
+    modules = {
+        "cv_quality": {
+            "overall": cv_quality_overall,
+            "dimensions": cv_quality_dimensions,
+        },
+        "linkedin_quality": {
+            "overall": linkedin_quality_overall,
+            "dimensions": linkedin_quality_dimensions,
+        },
+        "consistency": {
+            "overall": consistency_overall,
+            "dimensions": consistency_dimensions,
+        },
+    }
+
+    overall = round(
+        sum(modules[key]["overall"] * weights[key] for key in WEIGHT_KEYS),
+        2,
+    )
 
     recommendations = []
-    if breakdown["section_core"] < 75:
-        recommendations.append("Add clear CV/LinkedIn sections: Summary, Experience, Education, and Skills.")
-    if breakdown["structure_depth"] < 40:
-        recommendations.append("Add Projects, Certifications, and Achievements sections to improve profile depth.")
-    if breakdown["keyword"] < 60:
-        recommendations.append("Increase role-relevant ATS keywords in both CV and LinkedIn profile.")
-    if breakdown["consistency"] < 60:
-        recommendations.append("Align role titles and projects between CV and LinkedIn for consistency.")
-    if breakdown["contact_readiness"] < 70:
-        recommendations.append("Add complete contact details, including email, phone, and LinkedIn profile URL.")
-    if breakdown["impact_evidence"] < 40:
-        recommendations.append("Include measurable outcomes (percentages, scale, or delivery impact) in achievements.")
+    if cv_quality_overall < 70:
+        recommendations.append("Strengthen CV structure, keyword relevance, and measurable impact evidence.")
+    if linkedin_quality_overall < 70:
+        recommendations.append("Improve LinkedIn profile depth with clearer sections, skills, and impact metrics.")
+    if consistency_overall < 70:
+        recommendations.append("Align role titles, skills, projects, and timeline signals between CV and LinkedIn.")
+    if consistency_dimensions["timeline_alignment"] < 60:
+        recommendations.append("Review date ranges across CV and LinkedIn to reduce timeline inconsistencies.")
+    if consistency_dimensions["skills_overlap"] < 60:
+        recommendations.append("Harmonize top skills across CV and LinkedIn for stronger profile consistency.")
     if not recommendations:
-        recommendations.append("Profile baseline is strong. Prioritize impact metrics to improve competitiveness.")
+        recommendations.append("Profile baseline is strong. Continue refining quantified outcomes for higher ranking.")
 
     return {
         "overall": overall,
-        "profile_scores": {
-            "cv_quality": cv_quality_score,
-            "linkedin_quality": linkedin_quality_score,
-            "consistency": round(_clamp(consistency_score), 2),
+        "modules": modules,
+        "weights": {
+            "source": get_overall_weights_source() if overall_weights is None else "argument",
+            "values": weights,
         },
-        "breakdown": breakdown,
-        "weight_source": get_overall_weights_source() if overall_weights is None else "argument",
         "recommendations": recommendations,
     }
