@@ -5,6 +5,7 @@ import os
 import re
 from functools import lru_cache
 
+from .findings import METRIC_PATTERN, build_findings
 
 KEYWORDS = {
     "python",
@@ -17,7 +18,9 @@ KEYWORDS = {
 
 CORE_SECTIONS = {"summary", "experience", "education", "skills"}
 OPTIONAL_SECTIONS = {"projects", "certifications", "achievements", "languages", "volunteering"}
-IMPACT_PATTERN = re.compile(r"\b(?:\d+%|\d+[kKmM]?|increased|reduced|improved|delivered|launched)\b")
+IMPACT_PATTERN = re.compile(
+    r"\b(?:\d+%|\d+[kKmM]?|increased|reduced|improved|delivered|launched)\b"
+)
 
 WEIGHT_KEYS = (
     "cv_quality",
@@ -41,7 +44,7 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 
 
 def _score_contact_readiness(parsed: dict) -> float:
-    contacts = parsed.get("contacts", {})
+    contacts = parsed.get("contacts_cv", parsed.get("contacts", {}))
     has_email = bool(contacts.get("emails"))
     has_phone = bool(contacts.get("phones"))
     has_linkedin = bool(contacts.get("linkedin_urls"))
@@ -60,7 +63,7 @@ def _score_contact_readiness(parsed: dict) -> float:
 
 
 def _score_profile_readiness(parsed: dict) -> float:
-    linkedin_urls = parsed.get("contacts", {}).get("linkedin_urls", [])
+    linkedin_urls = parsed.get("contacts_linkedin", {}).get("linkedin_urls", [])
     roles = parsed.get("role_signals_linkedin", [])
     skills = parsed.get("skill_signals_linkedin", [])
 
@@ -76,7 +79,7 @@ def _score_profile_readiness(parsed: dict) -> float:
 
 
 def _score_impact_evidence(text_blob: str) -> float:
-    hits = IMPACT_PATTERN.findall(text_blob)
+    hits = METRIC_PATTERN.findall(text_blob)
     if not hits:
         return 0.0
     return _clamp((len(hits) / 8) * 100)
@@ -86,11 +89,15 @@ def _keyword_score(text: str) -> float:
     if not text.strip():
         return 0.0
 
-    keyword_hits = sum(1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text.lower()))
+    keyword_hits = sum(
+        1 for keyword in KEYWORDS if re.search(rf"\b{re.escape(keyword)}\b", text.lower())
+    )
     return (keyword_hits / len(KEYWORDS)) * 100
 
 
-def _score_source_quality(text: str, section_presence: dict, word_count: int, word_target: int) -> float:
+def _score_source_quality(
+    text: str, section_presence: dict, word_count: int, word_target: int
+) -> float:
     if not text.strip():
         return 0.0
 
@@ -156,7 +163,9 @@ def _validate_overall_weights(raw_weights: dict, source: str) -> dict:
             details.append(f"missing keys: {sorted(missing_keys)}")
         if unexpected_keys:
             details.append(f"unexpected keys: {sorted(unexpected_keys)}")
-        raise ScoringConfigurationError(f"Invalid scoring weights keys in {source}: {'; '.join(details)}")
+        raise ScoringConfigurationError(
+            f"Invalid scoring weights keys in {source}: {'; '.join(details)}"
+        )
 
     normalized_weights = {}
     for key in WEIGHT_KEYS:
@@ -166,7 +175,9 @@ def _validate_overall_weights(raw_weights: dict, source: str) -> dict:
 
         numeric_value = float(value)
         if numeric_value < 0 or numeric_value > 1:
-            raise ScoringConfigurationError(f"Scoring weight '{key}' in {source} must be between 0 and 1.")
+            raise ScoringConfigurationError(
+                f"Scoring weight '{key}' in {source} must be between 0 and 1."
+            )
 
         normalized_weights[key] = numeric_value
 
@@ -186,13 +197,15 @@ def _load_overall_weights() -> tuple[dict, str]:
         try:
             parsed_json = json.loads(weights_json)
         except json.JSONDecodeError as exc:
-            raise ScoringConfigurationError("Invalid JSON in TUGAAGIL_SCORING_WEIGHTS_JSON.") from exc
+            raise ScoringConfigurationError(
+                "Invalid JSON in TUGAAGIL_SCORING_WEIGHTS_JSON."
+            ) from exc
         return _validate_overall_weights(parsed_json, "TUGAAGIL_SCORING_WEIGHTS_JSON"), "env_json"
 
     weights_file = os.getenv("TUGAAGIL_SCORING_WEIGHTS_FILE", "").strip()
     if weights_file:
         try:
-            with open(weights_file, "r", encoding="utf-8") as file_handle:
+            with open(weights_file, encoding="utf-8") as file_handle:
                 parsed_file = json.load(file_handle)
         except FileNotFoundError as exc:
             raise ScoringConfigurationError(
@@ -222,7 +235,7 @@ def reset_overall_weights_cache() -> None:
 
 
 def _score_cv_quality(parsed: dict) -> tuple[float, dict]:
-    section_presence = parsed.get("section_presence", {})
+    section_presence = parsed.get("section_presence_cv", {})
     sections_present = sum(1 for section in CORE_SECTIONS if section_presence.get(section, False))
     section_core_score = (sections_present / len(CORE_SECTIONS)) * 100
 
@@ -263,7 +276,9 @@ def _score_linkedin_quality(parsed: dict) -> tuple[float, dict]:
     linkedin_section_presence = parsed.get("section_presence_linkedin", {})
 
     structure_hits = sum(
-        1 for section in ("summary", "experience", "skills") if linkedin_section_presence.get(section, False)
+        1
+        for section in ("summary", "experience", "skills")
+        if linkedin_section_presence.get(section, False)
     )
     structure_coverage_score = (structure_hits / 3) * 100
 
@@ -333,7 +348,11 @@ def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
     linkedin_quality_overall, linkedin_quality_dimensions = _score_linkedin_quality(parsed)
     consistency_overall, consistency_dimensions = _score_consistency(parsed)
 
-    weights = get_overall_weights() if overall_weights is None else _validate_overall_weights(overall_weights, "argument")
+    weights = (
+        get_overall_weights()
+        if overall_weights is None
+        else _validate_overall_weights(overall_weights, "argument")
+    )
 
     modules = {
         "cv_quality": {
@@ -350,24 +369,32 @@ def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
         },
     }
 
+    available = {
+        "cv_quality": bool(parsed.get("cv_text", "").strip()),
+        "linkedin_quality": bool(parsed.get("linkedin_text", "").strip()),
+        "consistency": bool(
+            parsed.get("cv_text", "").strip() and parsed.get("linkedin_text", "").strip()
+        ),
+    }
+    weight_sum = sum(weights[key] for key in WEIGHT_KEYS if available[key])
+    effective_weights = {
+        key: (weights[key] / weight_sum if available[key] and weight_sum else 0.0)
+        for key in WEIGHT_KEYS
+    }
+    for key in WEIGHT_KEYS:
+        modules[key]["assessed"] = available[key]
+        if not available[key]:
+            modules[key]["overall"] = None
+            modules[key]["dimensions"] = {}
     overall = round(
-        sum(modules[key]["overall"] * weights[key] for key in WEIGHT_KEYS),
-        2,
+        sum((modules[key]["overall"] or 0) * effective_weights[key] for key in WEIGHT_KEYS), 2
     )
 
-    recommendations = []
-    if cv_quality_overall < 70:
-        recommendations.append("Strengthen CV structure, keyword relevance, and measurable impact evidence.")
-    if linkedin_quality_overall < 70:
-        recommendations.append("Improve LinkedIn profile depth with clearer sections, skills, and impact metrics.")
-    if consistency_overall < 70:
-        recommendations.append("Align role titles, skills, projects, and timeline signals between CV and LinkedIn.")
-    if consistency_dimensions["timeline_alignment"] < 60:
-        recommendations.append("Review date ranges across CV and LinkedIn to reduce timeline inconsistencies.")
-    if consistency_dimensions["skills_overlap"] < 60:
-        recommendations.append("Harmonize top skills across CV and LinkedIn for stronger profile consistency.")
-    if not recommendations:
-        recommendations.append("Profile baseline is strong. Continue refining quantified outcomes for higher ranking.")
+    findings = build_findings(
+        parsed.get("cv_text_original", parsed.get("cv_text", "")),
+        parsed.get("linkedin_text_original", parsed.get("linkedin_text", "")),
+    )
+    recommendations = [item["description"] + " " + item["recommendation"] for item in findings]
 
     return {
         "overall": overall,
@@ -375,6 +402,8 @@ def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
         "weights": {
             "source": get_overall_weights_source() if overall_weights is None else "argument",
             "values": weights,
+            "effective_values": effective_weights,
         },
         "recommendations": recommendations,
+        "feedback_items": findings,
     }

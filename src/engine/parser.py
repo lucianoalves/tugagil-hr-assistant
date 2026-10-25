@@ -3,12 +3,49 @@ from __future__ import annotations
 import datetime
 import re
 
-
 SECTION_ALIASES = {
-    "summary": ["summary", "professional summary", "profile", "about", "objective"],
-    "experience": ["experience", "employment", "work history", "professional experience"],
-    "education": ["education", "academic", "degree", "university", "qualification"],
-    "skills": ["skills", "competencies", "tech stack", "technical skills"],
+    "summary": [
+        "summary",
+        "professional summary",
+        "profile",
+        "about",
+        "objective",
+        "resumo",
+        "sobre",
+        "perfil",
+        "objetivo",
+    ],
+    "experience": [
+        "experience",
+        "employment",
+        "work history",
+        "professional experience",
+        "experiência",
+        "experiencia",
+        "experiência profissional",
+        "histórico profissional",
+    ],
+    "education": [
+        "education",
+        "academic",
+        "degree",
+        "university",
+        "qualification",
+        "formação",
+        "educação",
+        "formacao",
+        "formação académica",
+    ],
+    "skills": [
+        "skills",
+        "competencies",
+        "tech stack",
+        "technical skills",
+        "competências",
+        "competencias",
+        "habilidades",
+        "tecnologias",
+    ],
     "projects": ["projects", "project experience", "portfolio"],
     "certifications": ["certifications", "certificates", "licenses"],
     "achievements": ["achievements", "accomplishments", "awards"],
@@ -26,8 +63,12 @@ SECTION_PATTERNS = {
 }
 
 EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-PHONE_PATTERN = re.compile(r"\b(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}\b")
-LINKEDIN_PATTERN = re.compile(r"\b(?:https?://)?(?:www\.)?linkedin\.com/in/[^\s,;]+\b", re.IGNORECASE)
+PHONE_PATTERN = re.compile(
+    r"\b(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}\b"
+)
+LINKEDIN_PATTERN = re.compile(
+    r"\b(?:https?://)?(?:www\.)?linkedin\.com/in/[^\s,;]+\b", re.IGNORECASE
+)
 GITHUB_PATTERN = re.compile(r"\b(?:https?://)?(?:www\.)?github\.com/[^\s,;]+\b", re.IGNORECASE)
 
 ROLE_PATTERN = re.compile(
@@ -41,7 +82,7 @@ ROLE_PATTERN = re.compile(
 SKILL_PATTERN = re.compile(
     r"\b(?:python|sql|java|javascript|typescript|aws|azure|gcp|docker|kubernetes|react|next\.?js|"
     r"node\.?js|fastapi|django|flask|postgres(?:ql)?|mysql|mongodb|redis|git|leadership|"
-    r"communication|project\s*management|api|analytics)\b",
+    r"communication|project\s*management|gestão\s*de\s*projetos|liderança|api|analytics)\b",
     re.IGNORECASE,
 )
 
@@ -87,7 +128,9 @@ def _extract_skill_signals(text: str) -> list[str]:
 
 
 def _extract_project_signals(text: str) -> list[str]:
-    projects = {_normalize_signal(match.group(0)) for match in PROJECT_SIGNAL_PATTERN.finditer(text)}
+    projects = {
+        _normalize_signal(match.group(0)) for match in PROJECT_SIGNAL_PATTERN.finditer(text)
+    }
     return sorted(projects)
 
 
@@ -114,10 +157,12 @@ def parse_profile(cv_text: str, linkedin_text: str) -> dict:
         section: bool(pattern.search(combined)) for section, pattern in SECTION_PATTERNS.items()
     }
     section_presence_cv = {
-        section: bool(pattern.search(cv_normalized)) for section, pattern in SECTION_PATTERNS.items()
+        section: bool(pattern.search(cv_normalized))
+        for section, pattern in SECTION_PATTERNS.items()
     }
     section_presence_linkedin = {
-        section: bool(pattern.search(linkedin_normalized)) for section, pattern in SECTION_PATTERNS.items()
+        section: bool(pattern.search(linkedin_normalized))
+        for section, pattern in SECTION_PATTERNS.items()
     }
     detected_sections = [section for section, present in section_presence.items() if present]
     contacts = _extract_contacts(combined)
@@ -132,6 +177,8 @@ def parse_profile(cv_text: str, linkedin_text: str) -> dict:
     years_linkedin = _extract_year_signals(linkedin_normalized)
 
     return {
+        "cv_text_original": cv_text,
+        "linkedin_text_original": linkedin_text,
         "cv_text": cv_normalized,
         "linkedin_text": linkedin_normalized,
         "word_count": len(words),
@@ -142,6 +189,8 @@ def parse_profile(cv_text: str, linkedin_text: str) -> dict:
         "section_presence_linkedin": section_presence_linkedin,
         "detected_sections": detected_sections,
         "contacts": contacts,
+        "contacts_cv": _extract_contacts(cv_normalized),
+        "contacts_linkedin": _extract_contacts(linkedin_normalized),
         "role_signals_cv": role_signals_cv,
         "role_signals_linkedin": role_signals_linkedin,
         "skill_signals_cv": skill_signals_cv,

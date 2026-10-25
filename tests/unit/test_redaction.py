@@ -5,10 +5,7 @@ from src.redaction import redact_pii
 
 class RedactionUnitTest(unittest.TestCase):
     def test_redact_pii_masks_email_phone_and_urls(self) -> None:
-        text = (
-            "Contact john.doe@example.com +351 912 345 678 "
-            "https://example.com/path"
-        )
+        text = "Contact john.doe@example.com +351 912 345 678 https://example.com/path"
 
         redacted = redact_pii(text)
 

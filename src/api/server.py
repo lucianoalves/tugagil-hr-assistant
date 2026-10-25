@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -8,9 +9,10 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from src.engine import parse_profile, score_profile
+from src.engine.documents import export_docx, extract_document
+from src.engine.jobs import analyze_job
 from src.engine.scorer import ScoringConfigurationError
 from src.redaction import redact_pii
-
 
 APP_VERSION = "0.3.0"
 
@@ -68,22 +70,35 @@ def _parse_input_text(payload: dict) -> tuple[str, str, dict | None]:
         invalid_fields["linkedin_text"] = "must be a string"
 
     if invalid_fields:
-        return "", "", _error_response(
-            code="invalid_payload",
-            message="Payload validation failed.",
-            details={"fields": invalid_fields},
+        return (
+            "",
+            "",
+            _error_response(
+                code="invalid_payload",
+                message="Payload validation failed.",
+                details={"fields": invalid_fields},
+            ),
         )
 
     cv_text_clean = cv_text.strip() if isinstance(cv_text, str) else ""
     linkedin_text_clean = linkedin_text.strip() if isinstance(linkedin_text, str) else ""
 
     if not cv_text_clean and not linkedin_text_clean:
-        return "", "", _error_response(
-            code="missing_input",
-            message="At least one of cv_text or linkedin_text is required.",
+        return (
+            "",
+            "",
+            _error_response(
+                code="missing_input",
+                message="At least one of cv_text or linkedin_text is required.",
+            ),
         )
 
-    return cv_text_clean, linkedin_text_clean, None
+    # Preserve offsets and line numbers against the exact submitted version.
+    return (
+        cv_text if isinstance(cv_text, str) else "",
+        linkedin_text if isinstance(linkedin_text, str) else "",
+        None,
+    )
 
 
 def validate_payload(payload: dict) -> tuple[dict, int]:
@@ -111,6 +126,9 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
             "weights": score["weights"],
         },
         "recommendations": score["recommendations"],
+        "analysis_method": "rules",
+        "evidence_version": 1,
+        "feedback_items": score["feedback_items"],
         "redaction": {
             "cv_text_redacted": cv_redacted,
             "linkedin_text_redacted": linkedin_redacted,
@@ -150,7 +168,12 @@ def create_app(
         def do_POST(self) -> None:
             request_id = str(uuid.uuid4())
 
-            if self.path != "/api/validate":
+            if self.path not in (
+                "/api/validate",
+                "/api/extract",
+                "/api/export-cv",
+                "/api/analyze-job",
+            ):
                 self._send_json(
                     _with_request_id(
                         _error_response(code="not_found", message="Endpoint not found."),
@@ -223,10 +246,17 @@ def create_app(
                 )
                 return
 
+            max_body = 15 * 1024 * 1024 if self.path == "/api/extract" else 2 * 1024 * 1024
+            if content_length < 0 or content_length > max_body:
+                self._send_json(
+                    _error_response("payload_too_large", "Request body exceeds the maximum size."),
+                    413,
+                )
+                return
             raw_body = self.rfile.read(content_length)
             try:
                 payload = json.loads(raw_body.decode("utf-8") or "{}")
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 self._send_json(
                     _with_request_id(
                         _error_response(code="invalid_json", message="Invalid JSON body."),
@@ -239,14 +269,39 @@ def create_app(
             if not isinstance(payload, dict):
                 self._send_json(
                     _with_request_id(
-                        _error_response(code="invalid_payload", message="JSON body must be an object."),
+                        _error_response(
+                            code="invalid_payload", message="JSON body must be an object."
+                        ),
                         request_id=request_id,
                     ),
                     status=400,
                 )
                 return
 
-            response_body, status = validate_payload(payload)
+            if self.path == "/api/export-cv":
+                try:
+                    document = export_docx(payload.get("cv_text"))
+                    response_body, status = (
+                        {"data": base64.b64encode(document).decode("ascii")},
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/extract":
+                try:
+                    response_body, status = {"text": extract_document(payload)}, 200
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/analyze-job":
+                try:
+                    response_body, status = (
+                        analyze_job(payload.get("cv_text"), payload.get("job_text")),
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_job", str(exc)), 400
+            else:
+                response_body, status = validate_payload(payload)
             response_with_request_id = _with_request_id(response_body, request_id=request_id)
             self._send_json(response_with_request_id, status=status)
 
@@ -302,7 +357,9 @@ def run_server(
 
     configured_require_user_context = require_user_context
     if configured_require_user_context is None:
-        configured_require_user_context = os.getenv("TUGAAGIL_REQUIRE_USER_CONTEXT", "").lower() in {
+        configured_require_user_context = os.getenv(
+            "TUGAAGIL_REQUIRE_USER_CONTEXT", ""
+        ).lower() in {
             "1",
             "true",
             "yes",

@@ -3,7 +3,7 @@
 Production-minded HR assistant focused on CV + LinkedIn validation, deterministic scoring, explainability, and safe AI-assisted feedback.
 
 ## Status
-`v0.3.0` — deterministic scoring modules and API hardening in progress.
+`v0.4.0` — deployed Python API, evidence-based rules and Gemini pilot.
 
 ## MVP Scope (V1)
 - CV quality analysis
@@ -28,7 +28,8 @@ Production-minded HR assistant focused on CV + LinkedIn validation, deterministi
 Start the local API server:
 
 ```bash
-python -m src.api.server
+uv sync --locked
+uv run uvicorn src.api.app:app --host 127.0.0.1 --port 8000 --env-file .env
 ```
 
 Validate an input profile:
@@ -104,3 +105,38 @@ curl -X POST http://127.0.0.1:8000/api/validate \
 
 ## Planning
 - Current roadmap: `docs/ROADMAP.md`
+
+## CV platform integration (September 2026)
+
+The accompanying `tugaweb` application owns authentication, CV versions, human decisions, mentoring and retention. See `../tugaweb/docs/CV_VALIDATION.md` for the full screen acceptance guide.
+
+`POST /api/validate` now also returns `analysis_method: "rules"` and structured `feedback_items` (`type`, `priority`, `description`, `recommendation`). Existing score/recommendation/redaction fields remain compatible.
+
+`POST /api/extract` accepts `{ "extension": "pdf" | "docx", "data": "<base64>" }` and returns `{ "text": "..." }`. Input is limited to 10 MB decoded. DOCX extraction uses Python's standard library with bounded ZIP expansion; PDF extraction uses bounded `pypdf` parsing without operating-system binaries. Scanned PDFs require pasted text; no OCR service is added. Both routes use the existing API key and user context checks.
+
+Quality checks:
+
+```bash
+uv run ruff check src tests
+uv run mypy
+uv run pytest -q
+```
+
+Structured feedback now includes `rule_id`, `finding_kind`, `evidence` (source, verbatim quote, offsets, text line and scope) and `actions` (target document, section, guidance and a draft requiring confirmation). Lexical comparisons cannot determine whether two job entries represent the same experience, so differences are explicitly marked for human confirmation. Missing LinkedIn input is not an inconsistency and does not contribute a zero-scoring module to the overall score.
+
+`POST /api/export-cv` accepts `{ "cv_text": "approved version text" }` and returns a base64 DOCX in `data`. The web API applies ownership/assignment checks before calling it and delivers an attachment to the browser.
+# Preparação de candidaturas
+
+`POST /api/analyze-job` recebe `cv_text` e `job_text` e devolve requisitos com excertos verificáveis, estado de cobertura e limitações da análise por regras. A análise por regras é determinística. `src/ai/` integra Gemini para comparação, adequação, revisão e aprendizagem; cada saída é validada contra os blocos originais e o catálogo publicado. A integração com a interface e Supabase está documentada em `../tugaweb/docs/JOB_PREPARATION.md`.
+
+## Vercel and Gemini pilot
+
+Production health: https://tugagil-hr-assistant.vercel.app/health. Vercel discovers `src.api.app:app` through `pyproject.toml`. Copy `.env.example` for local settings; configure secrets in Vercel Environment Variables for deployment. Never commit the Gemini or Supabase service keys.
+
+The frontend triggers authenticated, bounded processing at `/internal/process`. A daily cron calls `/internal/maintenance`. AI requires both `LLM_ENABLED=true` and the database pilot toggle; paid calls remain blocked with `LLM_ALLOW_PAID=false`. Live synthetic tests verified all four Gemini operations. The database toggle is disabled after testing.
+
+See [deployment and operational guide](../tugaweb/docs/VERCEL_PILOT.md) and [Astra review checklist](../tugaweb/docs/ASTRA_REVIEW.md).
+
+## Notificações do portal
+
+Integração WhatsApp Twilio/Meta e contrato com o worker: [documentação](docs/WHATSAPP_NOTIFICATIONS.md). O login permanece por código de email.

@@ -59,3 +59,7 @@ Target: move from baseline executable API to a recruiter-ready validation workfl
 
 ### Phase 4 — Portfolio packaging
 - Close milestone items, update docs, and publish release notes.
+
+## Integrated CV platform — September 2026
+
+The companion `tugaweb` now implements persistence, usage limits, human review and UI flows previously outside this backend roadmap. The backend adds bounded document extraction and version-compatible structured feedback. See `../../tugaweb/docs/CV_VALIDATION.md` for implementation stages, acceptance checks and deployment prerequisites. External LLM activation and OCR remain outside the delivered runtime.

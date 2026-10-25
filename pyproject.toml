@@ -1,0 +1,37 @@
+[project]
+name = "tugagil-hr-assistant"
+version = "0.4.0"
+description = "Evidence-based career preparation for the TugÁgil community"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "pydantic-settings>=2.8,<3",
+  "google-genai>=1.0,<2",
+  "httpx>=0.28,<1",
+  "pypdf>=6.20,<7",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.11,<1", "mypy>=1.15,<2", "pytest>=8,<10", "pytest-cov>=6,<8"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/api/app.py", "src/config.py", "src/ai", "src/worker.py"]
+check_untyped_defs = true
+ignore_missing_imports = true
+follow_imports = "silent"
+
+[tool.vercel]
+entrypoint = "src.api.app:app"

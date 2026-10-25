@@ -30,3 +30,18 @@ All notable changes to this project are documented in this file.
 ### Changed
 - Updated module READMEs with current implementation scope.
 - Updated root `README.md` with local run and smoke test instructions.
+
+## Unreleased — CV platform integration
+
+- Add structured feedback for versioned CV review while retaining the existing scoring contract.
+- Add bounded PDF/DOCX extraction with format validation and text fallback messages.
+- Limit HTTP request body sizes and reject invalid UTF-8 JSON.
+- Add extraction tests and a Flake8 correctness configuration.
+- Document integration with the Next.js/Supabase CV, mentoring and review interface.
+
+### Evidence and approved revisions
+
+- Replace score-triggered generic advice with source-based findings, exact excerpts, line offsets, scoped absence notes and section-specific adjustment instructions.
+- Treat lexical differences as review prompts; do not claim a contradiction from differing dates or missing source text.
+- Recognize Portuguese section markers, separate CV/LinkedIn source features, and score only available modules when one source is absent.
+- Add authenticated DOCX export from the exact approved CV version, plus evidence and round-trip tests.

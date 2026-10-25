@@ -12,7 +12,6 @@ from src.engine.scorer import (
     score_profile,
 )
 
-
 VALID_WEIGHTS = {
     "cv_quality": 0.45,
     "linkedin_quality": 0.30,
