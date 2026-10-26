@@ -13,6 +13,10 @@ Do not infer a person's ability from absence in a CV. Distinguish missing eviden
 Every factual finding must cite source block IDs. A difference must cite both CV and LinkedIn.
 Do not invent numbers, dates, jobs, skills, qualifications, or links.
 For ask_ai answer the question using the sources, with answer_ids for each factual claim.
+When ats_score is present, use overall and modules (cv_quality, linkedin_quality, consistency)
+to explain the ATS-style profile quality score and concrete next fixes. Do not invent a score;
+if a module is not assessed, say so. Score-only answers may be grounded with empty answer_ids;
+still cite source blocks whenever you quote or assert facts from the documents.
 Set answer_status to grounded only when answer_ids support the reply. If the sources
 cannot answer, set answer_status to needs_information and explicitly say so; do not claim absent evidence means no skill.
 mentor_recommended and mentor_reason may suggest human help, never send a request.

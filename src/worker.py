@@ -15,6 +15,35 @@ from src.config import Settings, get_settings
 from src.engine.jobs import analyze_job
 
 
+def classify_provider_failure(exc: BaseException) -> str:
+    """Map provider/network failures to stable portal messages without leaking raw details."""
+    text = " ".join(
+        str(part)
+        for part in (
+            exc,
+            getattr(exc, "message", ""),
+            getattr(exc, "status", ""),
+            getattr(exc, "code", ""),
+            getattr(exc, "status_code", ""),
+        )
+        if part
+    ).lower()
+    if any(
+        marker in text
+        for marker in (
+            "429",
+            "resource_exhausted",
+            "resource exhausted",
+            "quota",
+            "rate limit",
+            "rate_limit",
+            "too many requests",
+        )
+    ):
+        return "Limite do fornecedor de IA atingido; tenta mais tarde."
+    return "Serviço temporariamente indisponível; os resultados por regras continuam disponíveis."
+
+
 class Worker:
     def __init__(self, settings: Settings):
         if not settings.supabase_url or not settings.supabase_service_role_key:
@@ -65,6 +94,12 @@ class Worker:
             else:
                 if task["billing_mode"] == "paid" and not self.settings.llm_allow_paid:
                     raise ValueError("Chamadas pagas não autorizadas neste ambiente")
+                request = dict(task.get("request") or {})
+                if task["operation"] == "ask_ai":
+                    request["score"] = {
+                        "overall": task.get("score"),
+                        "modules": task.get("score_modules") or {},
+                    }
                 provider = GeminiProvider(self.settings.gemini_api_key)
                 try:
                     result, tokens_in, tokens_out = analyze(
@@ -76,7 +111,7 @@ class Worker:
                         task.get("job_text") or "",
                         task.get("resources") or [],
                         task.get("confirmed_gaps") or [],
-                        task.get("request") or {},
+                        request,
                     )
                 finally:
                     provider.close()
@@ -93,7 +128,7 @@ class Worker:
                 )
             )
         except Exception as exc:
-            failure = "Serviço temporariamente indisponível; os resultados por regras continuam disponíveis."
+            failure = classify_provider_failure(exc)
             print(
                 json.dumps(
                     {"event": "analysis_failed", "task_id": task["id"], "type": type(exc).__name__}

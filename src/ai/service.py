@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.redaction import redact_pii
 
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 
 
 class StrictModel(BaseModel):
@@ -132,6 +132,7 @@ def analyze(
         or any(not isinstance(item, str) or len(item) > 1000 for item in history)
     ):
         raise ValueError("Histórico inválido")
+    score = request.get("score") if isinstance(request.get("score"), dict) else None
     raw, tokens_in, tokens_out = provider.complete(
         model,
         operation,
@@ -143,6 +144,7 @@ def analyze(
             "target_language": request.get("target_language", locale),
             "question": redact_pii(question),
             "history": [redact_pii(item) for item in history],
+            "ats_score": score,
         },
     )
     output = Output.model_validate_json(raw)
@@ -186,7 +188,12 @@ def analyze(
     if operation == "ask_ai":
         if not output.answer.strip():
             raise ValueError("Resposta vazia")
-        if output.answer_status == "grounded" and not output.answer_ids:
+        # Score-only coaching may be grounded on ats_score without document block IDs.
+        if (
+            output.answer_status == "grounded"
+            and not output.answer_ids
+            and not score
+        ):
             raise ValueError("Resposta factual exige evidências")
         result.update(
             {

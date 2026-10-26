@@ -1,7 +1,7 @@
 from unittest.mock import Mock
 
 from src.config import Settings
-from src.worker import Worker
+from src.worker import Worker, classify_provider_failure
 
 
 def make_worker():
@@ -41,3 +41,8 @@ def test_empty_queue_does_not_invoke_provider_or_finish():
     worker.rpc.return_value = None
     assert worker.once() is False
     assert worker.rpc.call_count == 1
+
+
+def test_classify_provider_quota_vs_generic_failure():
+    assert "Limite do fornecedor" in classify_provider_failure(RuntimeError("429 resource_exhausted"))
+    assert "temporariamente" in classify_provider_failure(RuntimeError("connection reset"))
