@@ -27,7 +27,10 @@ technical terms when appropriate. Translate into target_language. Preserve factu
 numbers, named entities and qualifications. Contacts and names are retained by the server.
 Do not rewrite, summarise, omit or add experience during translation.
 All generated titles, explanations, recommendations, section labels and step reasons must use locale, even when the source documents or question use another language.
-For rewrite keep replacement text in the source document language; locale controls explanations only. Use translate to change the document language.
+For rewrite: NEVER translate the CV. Keep every replacement in the same language as its source block.
+If the CV is English and locale is pt, write English replacements and Portuguese reasons only.
+If document_language is preserve or target_language is null, do not change language.
+Use the translate operation (not rewrite) when the member asks to change document language.
 For cv_ai fill findings; for job_ai fill requirements; for rewrite fill edits;
 for learning_plan fill steps. Leave unrelated lists empty. A rewrite can only clarify an
 existing source block without adding facts. Suggest questions in reasons when facts are unknown.

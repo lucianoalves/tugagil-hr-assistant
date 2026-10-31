@@ -8,7 +8,46 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.redaction import redact_pii
 
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"
+
+
+def document_language_signal(text: str) -> str:
+    """Lightweight PT/EN cue for rewrite guards (not a full language detector)."""
+    sample = text or ""
+    accents = len(re.findall(r"[ãõáàâéêíóôúçÃÕÁÀÂÉÊÍÓÔÚÇ]", sample))
+    pt = accents + len(
+        re.findall(
+            r"\b(?:experiência|experiencia|formação|formacao|competências|competencias|"
+            r"responsável|responsavel|desenvolvi|engenheiro|desde|para|com|uma|são|sao)\b",
+            sample,
+            re.I,
+        )
+    )
+    en = len(
+        re.findall(
+            r"\b(?:the|and|with|experience|education|skills|responsible|developed|managed|"
+            r"engineer|since|for|from|improved|reduced|delivered)\b",
+            sample,
+            re.I,
+        )
+    )
+    if accents and pt >= en:
+        return "pt"
+    if pt >= 2 and pt > en:
+        return "pt"
+    if en >= 2 and en > pt:
+        return "en"
+    if en >= 1 and pt == 0:
+        return "en"
+    if pt >= 1 and en == 0:
+        return "pt"
+    return "unknown"
+
+
+def rewrite_flips_language(source: str, replacement: str) -> bool:
+    left = document_language_signal(source)
+    right = document_language_signal(replacement)
+    return left in ("pt", "en") and right in ("pt", "en") and left != right
 
 
 class StrictModel(BaseModel):
@@ -133,20 +172,57 @@ def analyze(
     ):
         raise ValueError("Histórico inválido")
     score = request.get("score") if isinstance(request.get("score"), dict) else None
-    raw, tokens_in, tokens_out = provider.complete(
-        model,
-        operation,
-        {
-            "blocks": [{"id": b.id, "source": b.source, "text": b.text} for b in all_blocks],
-            "published_resources": catalog,
-            "confirmed_gaps": confirmed_gaps or [],
-            "locale": locale,
-            "target_language": request.get("target_language", locale),
-            "question": redact_pii(question),
-            "history": [redact_pii(item) for item in history],
-            "ats_score": score,
-        },
-    )
+    payload: dict[str, Any] = {
+        "blocks": [{"id": b.id, "source": b.source, "text": b.text} for b in all_blocks],
+        "published_resources": catalog,
+        "confirmed_gaps": confirmed_gaps or [],
+        "locale": locale,
+        "question": redact_pii(question),
+        "history": [redact_pii(item) for item in history],
+        "ats_score": score,
+    }
+    if operation == "translate":
+        payload["target_language"] = request.get("target_language", locale)
+    elif operation == "rewrite":
+        # UI locale must not become an implicit translation target.
+        payload["document_language"] = "preserve"
+        payload["target_language"] = None
+    else:
+        payload["target_language"] = None
+    # #region agent log
+    try:
+        with open(
+            "/Users/lucianoalves/Projects/Work/tugagil-research/.cursor/debug-0d35cf.log",
+            "a",
+            encoding="utf-8",
+        ) as handle:
+            import json as _json
+            import time as _time
+
+            handle.write(
+                _json.dumps(
+                    {
+                        "sessionId": "0d35cf",
+                        "hypothesisId": "H1",
+                        "location": "ai/service.py:analyze_payload",
+                        "message": "AI operation payload language fields",
+                        "data": {
+                            "operation": operation,
+                            "locale": locale,
+                            "target_language": payload.get("target_language"),
+                            "document_language": payload.get("document_language"),
+                            "cv_signal": document_language_signal(cv_text),
+                        },
+                        "timestamp": int(_time.time() * 1000),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
+    # #endregion
+    raw, tokens_in, tokens_out = provider.complete(model, operation, payload)
     output = Output.model_validate_json(raw)
     translations = {}
     for item in output.evidence_translations:
@@ -189,11 +265,7 @@ def analyze(
         if not output.answer.strip():
             raise ValueError("Resposta vazia")
         # Score-only coaching may be grounded on ats_score without document block IDs.
-        if (
-            output.answer_status == "grounded"
-            and not output.answer_ids
-            and not score
-        ):
+        if output.answer_status == "grounded" and not output.answer_ids and not score:
             raise ValueError("Resposta factual exige evidências")
         result.update(
             {
@@ -247,6 +319,41 @@ def analyze(
             raise ValueError("A tradução omite números da fonte")
         if "[REDACTED" in e.replacement or "http" in e.replacement:
             raise ValueError("A proposta contém contactos ou marcadores inválidos")
+        if operation == "rewrite" and rewrite_flips_language(b.original, e.replacement):
+            # #region agent log
+            try:
+                with open(
+                    "/Users/lucianoalves/Projects/Work/tugagil-research/.cursor/debug-0d35cf.log",
+                    "a",
+                    encoding="utf-8",
+                ) as handle:
+                    import json as _json
+                    import time as _time
+
+                    handle.write(
+                        _json.dumps(
+                            {
+                                "sessionId": "0d35cf",
+                                "hypothesisId": "H1",
+                                "location": "ai/service.py:rewrite_language_guard",
+                                "message": "rejected language-flip rewrite edit",
+                                "data": {
+                                    "source_id": e.source_id,
+                                    "source_lang": document_language_signal(b.original),
+                                    "replacement_lang": document_language_signal(e.replacement),
+                                },
+                                "timestamp": int(_time.time() * 1000),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            except OSError:
+                pass
+            # #endregion
+            raise ValueError(
+                "A proposta alterou o idioma do CV; usa Traduzir currículo para mudar de língua"
+            )
         replacements.append((b, e.replacement))
         result["edits"].append({**e.model_dump(), "before": b.original, "line": b.line})
     for s in output.steps:

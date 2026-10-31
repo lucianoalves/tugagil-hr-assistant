@@ -65,6 +65,34 @@ def test_rewrite_cannot_invent_metrics_and_preserves_source():
     assert result["edits"][0]["before"] == "Reduced latency by 20%"
 
 
+def test_rewrite_does_not_pass_ui_locale_as_translation_target():
+    provider = FakeProvider(
+        {
+            "edits": [
+                {
+                    "source_id": "cv:3",
+                    "replacement": "Achieved a 20% reduction in latency",
+                    "reason": "Melhorar clareza",
+                }
+            ]
+        }
+    )
+    analyze(provider, "fake", "rewrite", CV, request={"locale": "pt"})
+    assert provider.sources["locale"] == "pt"
+    assert provider.sources.get("target_language") is None
+    assert provider.sources.get("document_language") == "preserve"
+
+
+def test_rewrite_rejects_language_flip_from_english_to_portuguese():
+    edit = {
+        "source_id": "cv:2",
+        "replacement": "Experiência: engenheiro Python desde 2020 com formação sólida",
+        "reason": "Traduzir para português",
+    }
+    with pytest.raises(ValueError, match="idioma"):
+        analyze(FakeProvider({"edits": [edit]}), "fake", "rewrite", CV, request={"locale": "pt"})
+
+
 def test_plan_requires_confirmed_gaps_and_published_resources():
     step = {
         "title": "Study SQL",
