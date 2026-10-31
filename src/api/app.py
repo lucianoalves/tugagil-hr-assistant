@@ -14,7 +14,12 @@ from starlette.concurrency import run_in_threadpool
 
 from src.api.server import RateLimiter, validate_payload
 from src.config import Settings, get_settings
-from src.engine.documents import export_docx, extract_document
+from src.engine.documents import (
+    export_docx,
+    export_linkedin_pack,
+    extract_document,
+    split_linkedin_pack,
+)
 from src.engine.jobs import analyze_job
 from src.worker import Worker
 
@@ -23,6 +28,12 @@ class AnalysisInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cv_text: str = Field(default="", max_length=200000)
     linkedin_text: str = Field(default="", max_length=50000)
+
+
+class LinkedInPackInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    linkedin_text: str = Field(min_length=1, max_length=50000)
+    locale: str = Field(default="pt", max_length=8)
 
 
 class JobInput(BaseModel):
@@ -193,6 +204,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         body = await payload(request, AnalysisInput)
         document = await run_in_threadpool(export_docx, body["cv_text"])
         return {"data": base64.b64encode(document).decode("ascii")}
+
+    @app.post("/api/split-linkedin")
+    async def split_linkedin(request: Request):
+        body = await payload(request, LinkedInPackInput)
+        try:
+            sections = await run_in_threadpool(split_linkedin_pack, body["linkedin_text"])
+        except ValueError as exc:
+            return JSONResponse({"error": {"code": "invalid_document", "message": str(exc)}}, 400)
+        return {"sections": sections}
+
+    @app.post("/api/export-linkedin-pack")
+    async def export_linkedin(request: Request):
+        body = await payload(request, LinkedInPackInput)
+        try:
+            document = await run_in_threadpool(
+                export_linkedin_pack, body["linkedin_text"], body.get("locale") or "pt"
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": {"code": "invalid_document", "message": str(exc)}}, 400)
+        return {
+            "filename": "linkedin-sections.zip",
+            "data": base64.b64encode(document).decode("ascii"),
+        }
 
     return app
 

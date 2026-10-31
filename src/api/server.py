@@ -9,7 +9,12 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from src.engine import parse_profile, score_profile
-from src.engine.documents import export_docx, extract_document
+from src.engine.documents import (
+    export_docx,
+    export_linkedin_pack,
+    extract_document,
+    split_linkedin_pack,
+)
 from src.engine.jobs import analyze_job
 from src.engine.scorer import ScoringConfigurationError
 from src.redaction import redact_pii
@@ -118,13 +123,16 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
     cv_redacted = redact_pii(parsed["cv_text"])
     linkedin_redacted = redact_pii(parsed["linkedin_text"])
 
+    score_payload = {
+        "overall": score["overall"],
+        "modules": score["modules"],
+        "weights": score["weights"],
+    }
+    if score.get("potential_if_top_fixes") is not None:
+        score_payload["potential_if_top_fixes"] = score["potential_if_top_fixes"]
     response = {
         "version": APP_VERSION,
-        "score": {
-            "overall": score["overall"],
-            "modules": score["modules"],
-            "weights": score["weights"],
-        },
+        "score": score_payload,
         "recommendations": score["recommendations"],
         "analysis_method": "rules",
         "evidence_version": 1,
@@ -172,6 +180,8 @@ def create_app(
                 "/api/validate",
                 "/api/extract",
                 "/api/export-cv",
+                "/api/export-linkedin-pack",
+                "/api/split-linkedin",
                 "/api/analyze-job",
             ):
                 self._send_json(
@@ -283,6 +293,29 @@ def create_app(
                     document = export_docx(payload.get("cv_text"))
                     response_body, status = (
                         {"data": base64.b64encode(document).decode("ascii")},
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/export-linkedin-pack":
+                try:
+                    document = export_linkedin_pack(
+                        payload.get("linkedin_text"),
+                        payload.get("locale") if isinstance(payload.get("locale"), str) else "pt",
+                    )
+                    response_body, status = (
+                        {
+                            "filename": "linkedin-sections.zip",
+                            "data": base64.b64encode(document).decode("ascii"),
+                        },
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/split-linkedin":
+                try:
+                    response_body, status = (
+                        {"sections": split_linkedin_pack(payload.get("linkedin_text"))},
                         200,
                     )
                 except ValueError as exc:

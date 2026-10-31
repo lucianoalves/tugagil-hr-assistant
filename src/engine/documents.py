@@ -11,8 +11,49 @@ from xml.etree import ElementTree
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from .parser import split_document_sections
+
 MAX_BYTES = 10 * 1024 * 1024
 MAX_TEXT = 200_000
+MAX_LINKEDIN_TEXT = 50_000
+
+
+def split_linkedin_pack(text: str) -> list[dict]:
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_LINKEDIN_TEXT:
+        raise ValueError("Conteúdo do LinkedIn inválido.")
+    if any(ord(char) < 32 and char not in "\n\r\t" for char in text):
+        raise ValueError("O texto contém caracteres de controlo inválidos.")
+    return split_document_sections(text)
+
+
+def export_linkedin_pack(text: str, locale: str = "pt") -> bytes:
+    """ZIP of plain-text LinkedIn sections for manual paste (no profile overwrite)."""
+    sections = split_linkedin_pack(text)
+    en = locale == "en"
+    readme = (
+        "LinkedIn section pack (TugaAgil)\n"
+        "================================\n\n"
+        + (
+            "This ZIP does not update LinkedIn automatically.\n"
+            "Open your profile, edit each section, paste the matching file, and save.\n"
+            "Then export your LinkedIn PDF and re-import it in TugaAgil before applying to jobs.\n"
+            "The ATS score in TugaAgil only reflects text stored here, not the live profile.\n"
+            if en
+            else "Este ZIP não atualiza o LinkedIn automaticamente.\n"
+            "Abre o teu perfil, edita cada secção, cola o ficheiro correspondente e guarda.\n"
+            "Depois exporta o PDF do LinkedIn e reimporta no TugaAgil antes de candidatar.\n"
+            "A nota ATS no TugaAgil reflete só o texto guardado aqui, não o perfil live.\n"
+        )
+        + "\nFiles:\n"
+        + "\n".join(f"- {section['filename']} ({section['label']})" for section in sections)
+        + "\n"
+    )
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("00_README.txt", readme)
+        for section in sections:
+            archive.writestr(section["filename"], section["body"] + "\n")
+    return output.getvalue()
 
 
 def extract_document(payload: dict) -> str:

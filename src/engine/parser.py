@@ -144,6 +144,157 @@ def _extract_year_signals(text: str) -> list[int]:
     return sorted(years)
 
 
+SECTION_FILE_ORDER = (
+    "intro",
+    "summary",
+    "experience",
+    "education",
+    "skills",
+    "projects",
+    "certifications",
+    "achievements",
+    "languages",
+    "volunteering",
+    "publications",
+    "interests",
+    "references",
+    "contact",
+)
+
+SECTION_PACK_LABELS = {
+    "intro": "Intro",
+    "summary": "About",
+    "experience": "Experience",
+    "education": "Education",
+    "skills": "Skills",
+    "projects": "Projects",
+    "certifications": "Certifications",
+    "achievements": "Achievements",
+    "languages": "Languages",
+    "volunteering": "Volunteering",
+    "publications": "Publications",
+    "interests": "Interests",
+    "references": "References",
+    "contact": "Contact",
+}
+
+_CANONICAL_HEADERS = {
+    "summary": "About",
+    "experience": "Experience",
+    "education": "Education",
+    "skills": "Skills",
+}
+
+
+def _section_header_key(line: str) -> str | None:
+    cleaned = line.strip().rstrip(":").strip()
+    if not cleaned or len(cleaned) > 80:
+        return None
+    lowered = cleaned.lower()
+    for key, aliases in SECTION_ALIASES.items():
+        for alias in aliases:
+            if lowered == alias.lower():
+                return key
+    return None
+
+
+def split_document_sections(text: str) -> list[dict]:
+    """Split CV/LinkedIn plain text into section bodies using known headings."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    current_key = "intro"
+    buckets: dict[str, list[str]] = {"intro": []}
+    order: list[str] = ["intro"]
+
+    for line in lines:
+        key = _section_header_key(line)
+        if key is None:
+            buckets.setdefault(current_key, []).append(line)
+            continue
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        current_key = key
+
+    sections: list[dict] = []
+    for index, key in enumerate(order):
+        body = "\n".join(buckets.get(key, [])).strip()
+        if key == "intro" and not body:
+            continue
+        label = SECTION_PACK_LABELS.get(key, key.title())
+        filename = (
+            "LinkedIn_full.txt"
+            if False
+            else f"{index + 1:02d}_{label.replace(' ', '_')}.txt"
+        )
+        sections.append(
+            {
+                "key": key,
+                "label": label,
+                "body": body,
+                "filename": filename,
+            }
+        )
+
+    recognized = [section for section in sections if section["key"] != "intro"]
+    if not recognized:
+        return [
+            {
+                "key": "full",
+                "label": "LinkedIn",
+                "body": text.strip(),
+                "filename": "LinkedIn_full.txt",
+            }
+        ]
+
+    # Stable paste order for the known LinkedIn pack.
+    ranked = sorted(
+        sections,
+        key=lambda section: (
+            SECTION_FILE_ORDER.index(section["key"])
+            if section["key"] in SECTION_FILE_ORDER
+            else len(SECTION_FILE_ORDER),
+            section["key"],
+        ),
+    )
+    for index, section in enumerate(ranked):
+        label = section["label"].replace(" ", "_")
+        section["filename"] = f"{index + 1:02d}_{label}.txt"
+    return ranked
+
+
+def replace_or_append_section(text: str, section_key: str, body: str) -> str:
+    """Replace a section body or append a new headed section."""
+    body = (body or "").strip()
+    if not body:
+        return text
+    header = _CANONICAL_HEADERS.get(section_key) or SECTION_PACK_LABELS.get(
+        section_key, section_key.title()
+    )
+    parts = split_document_sections(text)
+    if len(parts) == 1 and parts[0]["key"] == "full":
+        return f"{text.rstrip()}\n\n{header}\n{body}".strip()
+
+    rebuilt: list[str] = []
+    replaced = False
+    for part in parts:
+        if part["key"] == "intro":
+            if part["body"]:
+                rebuilt.append(part["body"])
+            continue
+        rebuilt.append(SECTION_PACK_LABELS.get(part["key"], part["label"]))
+        if part["key"] == section_key:
+            rebuilt.append(body)
+            replaced = True
+        elif part["body"]:
+            rebuilt.append(part["body"])
+    if not replaced:
+        rebuilt.extend([header, body])
+    return "\n\n".join(chunk for chunk in rebuilt if chunk).strip()
+
+
 def parse_profile(cv_text: str, linkedin_text: str) -> dict:
     cv_normalized = _normalize(cv_text)
     linkedin_normalized = _normalize(linkedin_text)

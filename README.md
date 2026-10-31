@@ -125,6 +125,10 @@ uv run pytest -q
 Structured feedback now includes `rule_id`, `finding_kind`, `evidence` (source, verbatim quote, offsets, text line and scope) and `actions` (target document, section, guidance and a draft requiring confirmation). Lexical comparisons cannot determine whether two job entries represent the same experience, so differences are explicitly marked for human confirmation. Missing LinkedIn input is not an inconsistency and does not contribute a zero-scoring module to the overall score.
 
 `POST /api/export-cv` accepts `{ "cv_text": "approved version text" }` and returns a base64 DOCX in `data`. The web API applies ownership/assignment checks before calling it and delivers an attachment to the browser.
+
+`POST /api/split-linkedin` accepts `{ "linkedin_text": "…" }` and returns section bodies (`About`, `Experience`, `Skills`, …) for copy/paste. `POST /api/export-linkedin-pack` returns a base64 ZIP of those `.txt` files plus a README. Neither endpoint updates LinkedIn; members paste manually and re-import a PDF so the TugaAgil score matches the live profile.
+
+Rule analysis may include `feedback_items[].impact` (`delta_overall`, per-module deltas) and `score.potential_if_top_fixes` — simulated gains if top fixes were applied to the stored text.
 # Preparação de candidaturas
 
 `POST /api/analyze-job` recebe `cv_text` e `job_text` e devolve requisitos com excertos verificáveis, estado de cobertura e limitações da análise por regras. A análise por regras é determinística. `src/ai/` integra Gemini para comparação, adequação, revisão e aprendizagem; cada saída é validada contra os blocos originais e o catálogo publicado. A integração com a interface e Supabase está documentada em `../tugaweb/docs/JOB_PREPARATION.md`.

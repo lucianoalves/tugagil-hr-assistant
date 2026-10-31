@@ -6,6 +6,7 @@ import re
 from functools import lru_cache
 
 from .findings import METRIC_PATTERN, build_findings
+from .impact import enrich_findings_with_impact
 
 KEYWORDS = {
     "python",
@@ -343,7 +344,12 @@ def _score_consistency(parsed: dict) -> tuple[float, dict]:
     return overall, dimensions
 
 
-def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
+def score_profile(
+    parsed: dict,
+    overall_weights: dict | None = None,
+    *,
+    attach_impact: bool = True,
+) -> dict:
     cv_quality_overall, cv_quality_dimensions = _score_cv_quality(parsed)
     linkedin_quality_overall, linkedin_quality_dimensions = _score_linkedin_quality(parsed)
     consistency_overall, consistency_dimensions = _score_consistency(parsed)
@@ -394,9 +400,21 @@ def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
         parsed.get("cv_text_original", parsed.get("cv_text", "")),
         parsed.get("linkedin_text_original", parsed.get("linkedin_text", "")),
     )
+    potential = None
+    if attach_impact:
+        findings, potential = enrich_findings_with_impact(
+            parsed.get("cv_text_original", parsed.get("cv_text", "")),
+            parsed.get("linkedin_text_original", parsed.get("linkedin_text", "")),
+            findings,
+            overall,
+            modules,
+            lambda candidate: score_profile(
+                candidate, overall_weights=weights, attach_impact=False
+            ),
+        )
     recommendations = [item["description"] + " " + item["recommendation"] for item in findings]
 
-    return {
+    result = {
         "overall": overall,
         "modules": modules,
         "weights": {
@@ -407,3 +425,6 @@ def score_profile(parsed: dict, overall_weights: dict | None = None) -> dict:
         "recommendations": recommendations,
         "feedback_items": findings,
     }
+    if potential is not None:
+        result["potential_if_top_fixes"] = potential
+    return result
