@@ -1,7 +1,7 @@
 """ASGI API. Long running LLM work belongs to the durable worker."""
 
 import base64
-import hmac
+import os
 import uuid
 from typing import Any
 from urllib.parse import quote
@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from src.api.secrets import bearer_matches, secret_matches
 from src.api.server import RateLimiter, validate_payload
 from src.config import Settings, get_settings
 from src.engine.documents import (
@@ -89,10 +90,20 @@ def stored_document(config: Settings, path: str, user: str) -> str:
     return extract_document({"extension": extension, "data": base64.b64encode(content).decode()})
 
 
+def _requires_configured_secrets(config: Settings) -> bool:
+    """Deployed runtimes must not boot when the portal key or cron secret is missing.
+
+    `VERCEL=1` covers a project that left `ENVIRONMENT` at its development default.
+    """
+    if os.getenv("VERCEL") == "1":
+        return True
+    return config.environment not in {"development", "test"}
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or get_settings()
-    if config.environment != "development" and not config.api_key:
-        raise ValueError("TUGAAGIL_API_KEY is required outside development")
+    if _requires_configured_secrets(config) and (not config.api_key or not config.cron_secret):
+        raise ValueError("TUGAAGIL_API_KEY and CRON_SECRET are required outside development")
     app = FastAPI(title="TugÁgil HR Assistant", version="0.4.0", docs_url=None, redoc_url=None)
     limiter = RateLimiter(60, 60)
 
@@ -101,13 +112,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request_id = str(uuid.uuid4())
         maintenance = request.url.path == "/internal/maintenance"
         if maintenance:
-            if not config.cron_secret or not hmac.compare_digest(
-                request.headers.get("authorization", ""), "Bearer " + config.cron_secret
+            # Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. No x-api-key.
+            if not bearer_matches(
+                request.headers.get("authorization", ""),
+                config.cron_secret,
+                config.cron_secret_previous,
             ):
                 return JSONResponse({"error": {"code": "unauthorized"}}, status_code=401)
         elif request.url.path != "/health":
+            # Portal shared key. Plan and pilot are not headers this API authorizes on.
             provided = request.headers.get("x-api-key", "")
-            if config.api_key and not hmac.compare_digest(provided, config.api_key):
+            if not secret_matches(provided, config.api_key, config.api_key_previous):
                 return JSONResponse({"error": {"code": "unauthorized"}}, status_code=401)
             user = request.headers.get("x-user-id", "")
             if config.require_user_context and not user:

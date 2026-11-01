@@ -37,6 +37,8 @@ Validate an input profile:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/validate \
   -H "Content-Type: application/json" \
+  -H "x-api-key: $TUGAAGIL_API_KEY" \
+  -H "x-user-id: 00000000-0000-4000-8000-000000000001" \
   -d '{
     "cv_text": "Summary... Experience... Skills...",
     "linkedin_text": "Experience... Skills..."
@@ -50,8 +52,15 @@ python -m unittest tests/smoke/test_validate_endpoint.py
 ```
 
 ## Runtime Configuration
-- `TUGAAGIL_API_KEY`: if set, requests to `POST /api/validate` must include matching `x-api-key`.
-- `TUGAAGIL_REQUIRE_USER_CONTEXT`: when `true`, `x-user-id` header is required.
+- `TUGAAGIL_API_KEY`: required. `POST` routes must send it as `x-api-key`. An unset key is rejected (fail closed).
+- `TUGAAGIL_API_KEY_PREVIOUS`: optional retiring key, accepted only during rotation.
+- `CRON_SECRET`: required outside development. `GET /internal/maintenance` must send `Authorization: Bearer <CRON_SECRET>`.
+- `CRON_SECRET_PREVIOUS`: optional retiring cron secret.
+- `TUGAAGIL_REQUIRE_USER_CONTEXT`: when `true` (ASGI default), `x-user-id` must be the member's Supabase auth UUID.
+- `x-user-plan` and `x-user-role` are not access checks. Associate plan and pilot access are enforced by the portal and by `portal_claim_task`, not by these headers.
+
+Secret rotation, where the variables are set, and the portal contract: [docs/PILOT_SECRETS.md](docs/PILOT_SECRETS.md).
+
 - `TUGAAGIL_SCORING_WEIGHTS_FILE`: optional JSON file path with deterministic overall weights.
 - `TUGAAGIL_SCORING_WEIGHTS_JSON`: optional inline JSON override for deterministic overall weights.
 
@@ -83,10 +92,8 @@ Example secured request:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/validate \
   -H "Content-Type: application/json" \
-  -H "x-api-key: local-dev-secret" \
-  -H "x-user-id: user-123" \
-  -H "x-user-role: free" \
-  -H "x-user-plan: free" \
+  -H "x-api-key: $TUGAAGIL_API_KEY" \
+  -H "x-user-id: 00000000-0000-4000-8000-000000000001" \
   -d '{
     "cv_text": "Summary... Experience... Skills...",
     "linkedin_text": "Experience... Skills..."
@@ -135,7 +142,7 @@ Rule analysis may include `feedback_items[].impact` (`delta_overall`, per-module
 
 ## Vercel and Gemini pilot
 
-Production health: https://tugagil-hr-assistant.vercel.app/health. Vercel discovers `src.api.app:app` through `pyproject.toml`. Copy `.env.example` for local settings; configure secrets in Vercel Environment Variables for deployment. Never commit the Gemini or Supabase service keys.
+Production health: https://tugagil-hr-assistant.vercel.app/health. Vercel discovers `src.api.app:app` through `pyproject.toml`. Copy `.env.example` for local names; set real values in the Vercel project's Environment Variables (see [secret rotation](docs/PILOT_SECRETS.md)). Never commit Gemini, Supabase, cron, or backend keys, and do not keep them in `.local/`.
 
 The frontend triggers authenticated, bounded processing at `/internal/process`. A daily cron calls `/internal/maintenance`. AI requires both `LLM_ENABLED=true` and the database pilot toggle; paid calls remain blocked with `LLM_ALLOW_PAID=false`. Live synthetic tests verified all four Gemini operations. The database toggle is disabled after testing.
 

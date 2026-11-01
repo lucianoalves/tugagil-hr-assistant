@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 .env*
 !.env.example
+.local/
+pilot-deploy.json
 .vercel/
 .pytest_cache/
 .ruff_cache/

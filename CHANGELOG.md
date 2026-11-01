@@ -31,6 +31,12 @@ All notable changes to this project are documented in this file.
 - Updated module READMEs with current implementation scope.
 - Updated root `README.md` with local run and smoke test instructions.
 
+## Unreleased — secret rotation
+
+- Read the portal key and cron secret only from environment variables, compare them in constant time, and accept an optional previous value during rotation.
+- Fail closed when either secret is unset. Deployed processes (`VERCEL=1` or any environment other than development/test) refuse to start without both.
+- Ignore `.local/` and `pilot-deploy.json`. Document rotation and the tugaweb contract in `docs/PILOT_SECRETS.md`.
+
 ## Unreleased — CV platform integration
 
 - Add structured feedback for versioned CV review while retaining the existing scoring contract.

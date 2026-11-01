@@ -44,5 +44,7 @@ def test_empty_queue_does_not_invoke_provider_or_finish():
 
 
 def test_classify_provider_quota_vs_generic_failure():
-    assert "Limite do fornecedor" in classify_provider_failure(RuntimeError("429 resource_exhausted"))
+    assert "Limite do fornecedor" in classify_provider_failure(
+        RuntimeError("429 resource_exhausted")
+    )
     assert "temporariamente" in classify_provider_failure(RuntimeError("connection reset"))

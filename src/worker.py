@@ -65,6 +65,8 @@ class Worker:
         return response.json() if response.content else None
 
     def once(self, actor: str | None = None) -> bool:
+        # Plan and pilot checks stay inside portal_claim_task. Do not filter on a plan code here:
+        # signup can assign `associate` in the database without this worker knowing the old value.
         task = self.rpc(
             "portal_claim_task",
             {

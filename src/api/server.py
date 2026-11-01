@@ -8,6 +8,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from src.api.secrets import secret_matches
 from src.engine import parse_profile, score_profile
 from src.engine.documents import (
     export_docx,
@@ -159,10 +160,13 @@ def _safe_text_length(value: object) -> int:
 def create_app(
     rate_limiter: RateLimiter | None = None,
     api_key: str | None = None,
+    api_key_previous: str | None = None,
     require_user_context: bool = False,
 ):
     limiter = rate_limiter or RateLimiter(max_requests=60, window_seconds=60)
-    enforced_api_key = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
+    # Blank or missing key fails closed. Previous key is optional (rotation window).
+    current_api_key = api_key.strip() if isinstance(api_key, str) else ""
+    previous_api_key = api_key_previous.strip() if isinstance(api_key_previous, str) else ""
 
     class ValidateRequestHandler(BaseHTTPRequestHandler):
         def _send_json(self, body: dict, status: int = 200) -> None:
@@ -194,23 +198,23 @@ def create_app(
                 return
 
             user_id = (self.headers.get("x-user-id") or "").strip()
+            # Role and plan are optional audit fields. They do not grant access.
             user_role = (self.headers.get("x-user-role") or "").strip()
             user_plan = (self.headers.get("x-user-plan") or "").strip()
 
-            if enforced_api_key:
-                provided_api_key = (self.headers.get("x-api-key") or "").strip()
-                if provided_api_key != enforced_api_key:
-                    self._send_json(
-                        _with_request_id(
-                            _error_response(
-                                code="unauthorized",
-                                message="Missing or invalid API key.",
-                            ),
-                            request_id=request_id,
+            provided_api_key = self.headers.get("x-api-key") or ""
+            if not secret_matches(provided_api_key, current_api_key, previous_api_key):
+                self._send_json(
+                    _with_request_id(
+                        _error_response(
+                            code="unauthorized",
+                            message="Missing or invalid API key.",
                         ),
-                        status=401,
-                    )
-                    return
+                        request_id=request_id,
+                    ),
+                    status=401,
+                )
+                return
 
             if require_user_context and not user_id:
                 self._send_json(
@@ -358,7 +362,7 @@ def create_app(
                         "status": "ok",
                         "version": APP_VERSION,
                         "auth": {
-                            "api_key_required": bool(enforced_api_key),
+                            "api_key_required": True,
                             "require_user_context": require_user_context,
                         },
                     },
@@ -382,11 +386,15 @@ def run_server(
     rate_limit_max_requests: int = 60,
     rate_limit_window_seconds: int = 60,
     api_key: str | None = None,
+    api_key_previous: str | None = None,
     require_user_context: bool | None = None,
 ) -> ThreadingHTTPServer:
     configured_api_key = api_key
     if configured_api_key is None:
         configured_api_key = os.getenv("TUGAAGIL_API_KEY")
+    configured_previous = api_key_previous
+    if configured_previous is None:
+        configured_previous = os.getenv("TUGAAGIL_API_KEY_PREVIOUS")
 
     configured_require_user_context = require_user_context
     if configured_require_user_context is None:
@@ -406,6 +414,7 @@ def run_server(
                 window_seconds=rate_limit_window_seconds,
             ),
             api_key=configured_api_key,
+            api_key_previous=configured_previous,
             require_user_context=configured_require_user_context,
         ),
     )

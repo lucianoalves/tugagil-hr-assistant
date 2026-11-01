@@ -12,7 +12,7 @@ Coverage:
 - verifies invalid payload field types are rejected
 - verifies at least one non-empty input is required
 - verifies per-user rate limiting and deterministic `429` payload
-- verifies auth contract behavior (`x-api-key`, `x-user-id`)
+- verifies auth contract behavior (`x-api-key`, previous key, fail closed when unset, `x-user-id`)
 - verifies deterministic `scoring_configuration_error` on invalid scoring weights
 
 Run commands:
