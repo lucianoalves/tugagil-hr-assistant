@@ -13,8 +13,8 @@ Validation rules:
 - `cv_text` and `linkedin_text` must be strings when present.
 - At least one non-empty value between `cv_text` and `linkedin_text` is required.
 - Endpoint enforces per-user/IP request limits (60 requests per 60 seconds by default).
-- If `TUGAAGIL_API_KEY` is configured, `x-api-key` is required.
-- If `TUGAAGIL_REQUIRE_USER_CONTEXT=true`, `x-user-id` is required.
+- `x-api-key` is always required and must match `TUGAAGIL_API_KEY` (or `TUGAAGIL_API_KEY_PREVIOUS` during rotation). An unset key is rejected.
+- If `TUGAAGIL_REQUIRE_USER_CONTEXT=true`, `x-user-id` is required (Supabase auth UUID). `x-user-plan` and `x-user-role` are not checked.
 
 Error contract:
 - All API errors return a consistent payload shape:
@@ -30,7 +30,7 @@ Rate-limit error:
 - `error.details.retry_after_seconds` indicates when retry is allowed
 
 Auth errors:
-- `401` with `error.code = unauthorized` for missing/invalid API key.
+- `401` with `error.code = unauthorized` for a missing or invalid API key. The response does not echo the key.
 - `400` with `error.code = missing_user_context` when user context is required.
 
 Output:

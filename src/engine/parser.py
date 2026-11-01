@@ -225,9 +225,7 @@ def split_document_sections(text: str) -> list[dict]:
             continue
         label = SECTION_PACK_LABELS.get(key, key.title())
         filename = (
-            "LinkedIn_full.txt"
-            if False
-            else f"{index + 1:02d}_{label.replace(' ', '_')}.txt"
+            "LinkedIn_full.txt" if False else f"{index + 1:02d}_{label.replace(' ', '_')}.txt"
         )
         sections.append(
             {

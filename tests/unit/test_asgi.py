@@ -100,3 +100,84 @@ def test_private_storage_rejects_cross_owner_and_arbitrary_urls():
 def test_production_fails_closed_without_key():
     with pytest.raises(ValueError):
         create_app(Settings(_env_file=None, environment="production", TUGAAGIL_API_KEY=""))
+
+
+def test_production_fails_closed_without_cron_secret():
+    with pytest.raises(ValueError):
+        create_app(
+            Settings(
+                _env_file=None,
+                environment="production",
+                TUGAAGIL_API_KEY="configured",
+                CRON_SECRET="",
+            )
+        )
+
+
+def test_development_without_key_rejects_callers_and_keeps_health():
+    settings = Settings(_env_file=None, environment="development", TUGAAGIL_API_KEY="")
+    assert "TUGAAGIL" not in repr(settings)
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/health").status_code == 200
+        denied = client.post("/api/validate", json={"cv_text": "Python"})
+        assert denied.status_code == 401
+        assert denied.json()["error"]["code"] == "unauthorized"
+        assert "Python" not in denied.text
+
+
+def test_rotation_accepts_current_or_previous_secrets():
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        TUGAAGIL_API_KEY="current-key",
+        TUGAAGIL_API_KEY_PREVIOUS="previous-key",
+        CRON_SECRET="cron-current",
+        CRON_SECRET_PREVIOUS="cron-previous",
+    )
+    assert "current-key" not in repr(settings)
+    assert "cron-current" not in repr(settings)
+    with (
+        TestClient(create_app(settings)) as client,
+        patch("src.api.app.Worker") as worker,
+    ):
+        worker.return_value.once.return_value = False
+        payload = {"cv_text": "Python"}
+        headers = {"x-user-id": USER}
+        assert (
+            client.post(
+                "/api/validate", headers={**headers, "x-api-key": "current-key"}, json=payload
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/validate", headers={**headers, "x-api-key": "previous-key"}, json=payload
+            ).status_code
+            == 200
+        )
+        denied = client.post(
+            "/api/validate", headers={**headers, "x-api-key": "wrong-key"}, json=payload
+        )
+        assert denied.status_code == 401
+        assert "wrong-key" not in denied.text
+        assert "current-key" not in denied.text
+        assert "previous-key" not in denied.text
+        assert (
+            client.get(
+                "/internal/maintenance", headers={"Authorization": "Bearer cron-current"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                "/internal/maintenance", headers={"Authorization": "bearer cron-previous"}
+            ).status_code
+            == 200
+        )
+        cron_denied = client.get(
+            "/internal/maintenance", headers={"Authorization": "Bearer wrong-cron"}
+        )
+        assert cron_denied.status_code == 401
+        assert "wrong-cron" not in cron_denied.text
+        assert "cron-current" not in cron_denied.text
+        assert client.get("/internal/maintenance").status_code == 401

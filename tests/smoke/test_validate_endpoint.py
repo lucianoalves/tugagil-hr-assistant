@@ -8,11 +8,13 @@ from urllib import error, request
 from src.api.server import run_server
 from src.engine.scorer import reset_overall_weights_cache
 
+_SMOKE_KEY = "test-secret"
+
 
 class ValidateEndpointSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.server = run_server(port=0)
+        cls.server = run_server(port=0, api_key=_SMOKE_KEY)
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -33,7 +35,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -68,7 +70,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=b"{",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -88,7 +90,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -110,7 +112,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -125,7 +127,12 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
 class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.server = run_server(port=0, rate_limit_max_requests=2, rate_limit_window_seconds=300)
+        cls.server = run_server(
+            port=0,
+            api_key=_SMOKE_KEY,
+            rate_limit_max_requests=2,
+            rate_limit_window_seconds=300,
+        )
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -144,6 +151,7 @@ class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
         }
         headers = {
             "Content-Type": "application/json",
+            "x-api-key": _SMOKE_KEY,
             "x-user-id": "rate-limit-test-user",
         }
 
@@ -176,7 +184,12 @@ class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
 class ValidateEndpointAuthSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.server = run_server(port=0, api_key="test-secret", require_user_context=True)
+        cls.server = run_server(
+            port=0,
+            api_key="test-secret",
+            api_key_previous="previous-secret",
+            require_user_context=True,
+        )
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -208,6 +221,9 @@ class ValidateEndpointAuthSmokeTest(unittest.TestCase):
         body = json.loads(context.exception.read().decode("utf-8"))
         self.assertEqual(body["error"]["code"], "unauthorized")
         self.assertIn("request_id", body)
+        rendered = json.dumps(body)
+        self.assertNotIn("test-secret", rendered)
+        self.assertNotIn("previous-secret", rendered)
 
     def test_validate_rejects_missing_user_context_when_required(self) -> None:
         payload = {
@@ -256,6 +272,44 @@ class ValidateEndpointAuthSmokeTest(unittest.TestCase):
         self.assertIn("request_id", body)
         self.assertIn("score", body)
 
+    def test_validate_accepts_previous_key_during_rotation(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": "previous-secret",
+                "x-user-id": "auth-user-1",
+            },
+            method="POST",
+        )
+        with request.urlopen(req, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_unset_api_key_fails_closed(self) -> None:
+        server = run_server(port=0, api_key="")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        time.sleep(0.05)
+        try:
+            req = request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/validate",
+                data=b'{"cv_text":"Python"}',
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(error.HTTPError) as context:
+                request.urlopen(req, timeout=5)
+            self.assertEqual(context.exception.code, 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
 
 class ValidateEndpointScoringConfigSmokeTest(unittest.TestCase):
     @classmethod
@@ -269,7 +323,7 @@ class ValidateEndpointScoringConfigSmokeTest(unittest.TestCase):
         cls.env_patch.start()
         reset_overall_weights_cache()
 
-        cls.server = run_server(port=0)
+        cls.server = run_server(port=0, api_key=_SMOKE_KEY)
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -292,7 +346,7 @@ class ValidateEndpointScoringConfigSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
