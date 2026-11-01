@@ -2,15 +2,19 @@ import json
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib import error, request
 
 from src.api.server import run_server
+from src.engine.scorer import reset_overall_weights_cache
+
+_SMOKE_KEY = "test-secret"
 
 
 class ValidateEndpointSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.server = run_server(port=0)
+        cls.server = run_server(port=0, api_key=_SMOKE_KEY)
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -22,16 +26,16 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=2)
 
-    def test_validate_returns_score_and_redacted_output(self) -> None:
+    def test_validate_returns_module_score_contract_and_redaction(self) -> None:
         payload = {
-            "cv_text": "Summary Python API development. Email john.doe@example.com Phone +351 912 345 678",
-            "linkedin_text": "Experience leading project delivery. Skills Python SQL. https://linkedin.com/in/johndoe",
+            "cv_text": "Summary Python API development 2019-2023. Email john.doe@example.com Phone +351 912 345 678",
+            "linkedin_text": "Summary Lead Engineer. Experience 2020-2023 project delivery. Skills Python SQL. https://linkedin.com/in/johndoe",
         }
 
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -41,13 +45,23 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
 
         self.assertEqual(body["version"], "0.3.0")
         self.assertIn("overall", body["score"])
-        self.assertIn("profile_scores", body["score"])
-        self.assertIn("breakdown", body["score"])
-        self.assertIn("cv_quality", body["score"]["profile_scores"])
-        self.assertIn("linkedin_quality", body["score"]["profile_scores"])
-        self.assertIn("consistency", body["score"]["profile_scores"])
+        self.assertIn("modules", body["score"])
+        self.assertIn("weights", body["score"])
+
+        modules = body["score"]["modules"]
+        self.assertIn("cv_quality", modules)
+        self.assertIn("linkedin_quality", modules)
+        self.assertIn("consistency", modules)
+        self.assertIn("dimensions", modules["cv_quality"])
+        self.assertIn("dimensions", modules["linkedin_quality"])
+        self.assertIn("dimensions", modules["consistency"])
+
+        self.assertEqual(body["score"]["weights"]["source"], "default")
+        self.assertIn("values", body["score"]["weights"])
+
         self.assertIn("recommendations", body)
         self.assertIn("redaction", body)
+        self.assertIn("request_id", body)
         self.assertNotIn("john.doe@example.com", body["redaction"]["cv_text_redacted"])
         self.assertNotIn("912 345 678", body["redaction"]["cv_text_redacted"])
         self.assertNotIn("linkedin.com/in/johndoe", body["redaction"]["linkedin_text_redacted"])
@@ -56,7 +70,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=b"{",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -76,7 +90,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -98,7 +112,7 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
         req = request.Request(
             f"http://127.0.0.1:{self.port}/api/validate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
             method="POST",
         )
 
@@ -113,7 +127,12 @@ class ValidateEndpointSmokeTest(unittest.TestCase):
 class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.server = run_server(port=0, rate_limit_max_requests=2, rate_limit_window_seconds=300)
+        cls.server = run_server(
+            port=0,
+            api_key=_SMOKE_KEY,
+            rate_limit_max_requests=2,
+            rate_limit_window_seconds=300,
+        )
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -125,13 +144,14 @@ class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=2)
 
-    def test_validate_enforces_rate_limit_per_user(self) -> None:
+    def test_validate_applies_rate_limit_per_user_header(self) -> None:
         payload = {
             "cv_text": "Summary Python API development.",
-            "linkedin_text": "Experience leading project delivery.",
+            "linkedin_text": "Experience leading delivery.",
         }
         headers = {
             "Content-Type": "application/json",
+            "x-api-key": _SMOKE_KEY,
             "x-user-id": "rate-limit-test-user",
         }
 
@@ -164,7 +184,12 @@ class ValidateEndpointRateLimitSmokeTest(unittest.TestCase):
 class ValidateEndpointAuthSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.server = run_server(port=0, api_key="test-secret", require_user_context=True)
+        cls.server = run_server(
+            port=0,
+            api_key="test-secret",
+            api_key_previous="previous-secret",
+            require_user_context=True,
+        )
         cls.port = cls.server.server_port
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -196,6 +221,9 @@ class ValidateEndpointAuthSmokeTest(unittest.TestCase):
         body = json.loads(context.exception.read().decode("utf-8"))
         self.assertEqual(body["error"]["code"], "unauthorized")
         self.assertIn("request_id", body)
+        rendered = json.dumps(body)
+        self.assertNotIn("test-secret", rendered)
+        self.assertNotIn("previous-secret", rendered)
 
     def test_validate_rejects_missing_user_context_when_required(self) -> None:
         payload = {
@@ -243,6 +271,92 @@ class ValidateEndpointAuthSmokeTest(unittest.TestCase):
 
         self.assertIn("request_id", body)
         self.assertIn("score", body)
+
+    def test_validate_accepts_previous_key_during_rotation(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": "previous-secret",
+                "x-user-id": "auth-user-1",
+            },
+            method="POST",
+        )
+        with request.urlopen(req, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_unset_api_key_fails_closed(self) -> None:
+        server = run_server(port=0, api_key="")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        time.sleep(0.05)
+        try:
+            req = request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/validate",
+                data=b'{"cv_text":"Python"}',
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(error.HTTPError) as context:
+                request.urlopen(req, timeout=5)
+            self.assertEqual(context.exception.code, 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+class ValidateEndpointScoringConfigSmokeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.invalid_weights = '{"cv_quality":0.5,"linkedin_quality":0.5}'
+        cls.env_patch = patch.dict(
+            "os.environ",
+            {"TUGAAGIL_SCORING_WEIGHTS_JSON": cls.invalid_weights},
+            clear=False,
+        )
+        cls.env_patch.start()
+        reset_overall_weights_cache()
+
+        cls.server = run_server(port=0, api_key=_SMOKE_KEY)
+        cls.port = cls.server.server_port
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        time.sleep(0.05)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+        cls.env_patch.stop()
+        reset_overall_weights_cache()
+
+    def test_validate_returns_configuration_error_for_invalid_weights(self) -> None:
+        payload = {
+            "cv_text": "Summary Python API development.",
+            "linkedin_text": "Experience leading delivery.",
+        }
+
+        req = request.Request(
+            f"http://127.0.0.1:{self.port}/api/validate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "x-api-key": _SMOKE_KEY},
+            method="POST",
+        )
+
+        with self.assertRaises(error.HTTPError) as context:
+            request.urlopen(req, timeout=5)
+
+        self.assertEqual(context.exception.code, 500)
+        body = json.loads(context.exception.read().decode("utf-8"))
+        self.assertEqual(body["error"]["code"], "scoring_configuration_error")
+        self.assertIn("request_id", body)
 
 
 if __name__ == "__main__":

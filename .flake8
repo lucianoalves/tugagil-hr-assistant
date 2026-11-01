@@ -1,0 +1,4 @@
+[flake8]
+# Check syntax and all Pyflakes correctness rules; formatting follows existing source.
+select = E9,F
+exclude = .git,__pycache__,.venv

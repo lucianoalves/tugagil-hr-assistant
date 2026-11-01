@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -7,9 +8,17 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from src.api.secrets import secret_matches
 from src.engine import parse_profile, score_profile
+from src.engine.documents import (
+    export_docx,
+    export_linkedin_pack,
+    extract_document,
+    split_linkedin_pack,
+)
+from src.engine.jobs import analyze_job
+from src.engine.scorer import ScoringConfigurationError
 from src.redaction import redact_pii
-
 
 APP_VERSION = "0.3.0"
 
@@ -67,22 +76,35 @@ def _parse_input_text(payload: dict) -> tuple[str, str, dict | None]:
         invalid_fields["linkedin_text"] = "must be a string"
 
     if invalid_fields:
-        return "", "", _error_response(
-            code="invalid_payload",
-            message="Payload validation failed.",
-            details={"fields": invalid_fields},
+        return (
+            "",
+            "",
+            _error_response(
+                code="invalid_payload",
+                message="Payload validation failed.",
+                details={"fields": invalid_fields},
+            ),
         )
 
     cv_text_clean = cv_text.strip() if isinstance(cv_text, str) else ""
     linkedin_text_clean = linkedin_text.strip() if isinstance(linkedin_text, str) else ""
 
     if not cv_text_clean and not linkedin_text_clean:
-        return "", "", _error_response(
-            code="missing_input",
-            message="At least one of cv_text or linkedin_text is required.",
+        return (
+            "",
+            "",
+            _error_response(
+                code="missing_input",
+                message="At least one of cv_text or linkedin_text is required.",
+            ),
         )
 
-    return cv_text_clean, linkedin_text_clean, None
+    # Preserve offsets and line numbers against the exact submitted version.
+    return (
+        cv_text if isinstance(cv_text, str) else "",
+        linkedin_text if isinstance(linkedin_text, str) else "",
+        None,
+    )
 
 
 def validate_payload(payload: dict) -> tuple[dict, int]:
@@ -91,19 +113,31 @@ def validate_payload(payload: dict) -> tuple[dict, int]:
         return validation_error, 400
 
     parsed = parse_profile(cv_text=cv_text, linkedin_text=linkedin_text)
-    score = score_profile(parsed)
+    try:
+        score = score_profile(parsed)
+    except ScoringConfigurationError as exc:
+        return _error_response(
+            code="scoring_configuration_error",
+            message=str(exc),
+        ), 500
 
     cv_redacted = redact_pii(parsed["cv_text"])
     linkedin_redacted = redact_pii(parsed["linkedin_text"])
 
+    score_payload = {
+        "overall": score["overall"],
+        "modules": score["modules"],
+        "weights": score["weights"],
+    }
+    if score.get("potential_if_top_fixes") is not None:
+        score_payload["potential_if_top_fixes"] = score["potential_if_top_fixes"]
     response = {
         "version": APP_VERSION,
-        "score": {
-            "overall": score["overall"],
-            "profile_scores": score["profile_scores"],
-            "breakdown": score["breakdown"],
-        },
+        "score": score_payload,
         "recommendations": score["recommendations"],
+        "analysis_method": "rules",
+        "evidence_version": 1,
+        "feedback_items": score["feedback_items"],
         "redaction": {
             "cv_text_redacted": cv_redacted,
             "linkedin_text_redacted": linkedin_redacted,
@@ -126,10 +160,13 @@ def _safe_text_length(value: object) -> int:
 def create_app(
     rate_limiter: RateLimiter | None = None,
     api_key: str | None = None,
+    api_key_previous: str | None = None,
     require_user_context: bool = False,
 ):
     limiter = rate_limiter or RateLimiter(max_requests=60, window_seconds=60)
-    enforced_api_key = api_key.strip() if isinstance(api_key, str) and api_key.strip() else None
+    # Blank or missing key fails closed. Previous key is optional (rotation window).
+    current_api_key = api_key.strip() if isinstance(api_key, str) else ""
+    previous_api_key = api_key_previous.strip() if isinstance(api_key_previous, str) else ""
 
     class ValidateRequestHandler(BaseHTTPRequestHandler):
         def _send_json(self, body: dict, status: int = 200) -> None:
@@ -143,7 +180,14 @@ def create_app(
         def do_POST(self) -> None:
             request_id = str(uuid.uuid4())
 
-            if self.path != "/api/validate":
+            if self.path not in (
+                "/api/validate",
+                "/api/extract",
+                "/api/export-cv",
+                "/api/export-linkedin-pack",
+                "/api/split-linkedin",
+                "/api/analyze-job",
+            ):
                 self._send_json(
                     _with_request_id(
                         _error_response(code="not_found", message="Endpoint not found."),
@@ -154,23 +198,23 @@ def create_app(
                 return
 
             user_id = (self.headers.get("x-user-id") or "").strip()
+            # Role and plan are optional audit fields. They do not grant access.
             user_role = (self.headers.get("x-user-role") or "").strip()
             user_plan = (self.headers.get("x-user-plan") or "").strip()
 
-            if enforced_api_key:
-                provided_api_key = (self.headers.get("x-api-key") or "").strip()
-                if provided_api_key != enforced_api_key:
-                    self._send_json(
-                        _with_request_id(
-                            _error_response(
-                                code="unauthorized",
-                                message="Missing or invalid API key.",
-                            ),
-                            request_id=request_id,
+            provided_api_key = self.headers.get("x-api-key") or ""
+            if not secret_matches(provided_api_key, current_api_key, previous_api_key):
+                self._send_json(
+                    _with_request_id(
+                        _error_response(
+                            code="unauthorized",
+                            message="Missing or invalid API key.",
                         ),
-                        status=401,
-                    )
-                    return
+                        request_id=request_id,
+                    ),
+                    status=401,
+                )
+                return
 
             if require_user_context and not user_id:
                 self._send_json(
@@ -216,10 +260,17 @@ def create_app(
                 )
                 return
 
+            max_body = 15 * 1024 * 1024 if self.path == "/api/extract" else 2 * 1024 * 1024
+            if content_length < 0 or content_length > max_body:
+                self._send_json(
+                    _error_response("payload_too_large", "Request body exceeds the maximum size."),
+                    413,
+                )
+                return
             raw_body = self.rfile.read(content_length)
             try:
                 payload = json.loads(raw_body.decode("utf-8") or "{}")
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 self._send_json(
                     _with_request_id(
                         _error_response(code="invalid_json", message="Invalid JSON body."),
@@ -232,14 +283,62 @@ def create_app(
             if not isinstance(payload, dict):
                 self._send_json(
                     _with_request_id(
-                        _error_response(code="invalid_payload", message="JSON body must be an object."),
+                        _error_response(
+                            code="invalid_payload", message="JSON body must be an object."
+                        ),
                         request_id=request_id,
                     ),
                     status=400,
                 )
                 return
 
-            response_body, status = validate_payload(payload)
+            if self.path == "/api/export-cv":
+                try:
+                    document = export_docx(payload.get("cv_text"))
+                    response_body, status = (
+                        {"data": base64.b64encode(document).decode("ascii")},
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/export-linkedin-pack":
+                try:
+                    document = export_linkedin_pack(
+                        payload.get("linkedin_text"),
+                        payload.get("locale") if isinstance(payload.get("locale"), str) else "pt",
+                    )
+                    response_body, status = (
+                        {
+                            "filename": "linkedin-sections.zip",
+                            "data": base64.b64encode(document).decode("ascii"),
+                        },
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/split-linkedin":
+                try:
+                    response_body, status = (
+                        {"sections": split_linkedin_pack(payload.get("linkedin_text"))},
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/extract":
+                try:
+                    response_body, status = {"text": extract_document(payload)}, 200
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_document", str(exc)), 400
+            elif self.path == "/api/analyze-job":
+                try:
+                    response_body, status = (
+                        analyze_job(payload.get("cv_text"), payload.get("job_text")),
+                        200,
+                    )
+                except ValueError as exc:
+                    response_body, status = _error_response("invalid_job", str(exc)), 400
+            else:
+                response_body, status = validate_payload(payload)
             response_with_request_id = _with_request_id(response_body, request_id=request_id)
             self._send_json(response_with_request_id, status=status)
 
@@ -263,7 +362,7 @@ def create_app(
                         "status": "ok",
                         "version": APP_VERSION,
                         "auth": {
-                            "api_key_required": bool(enforced_api_key),
+                            "api_key_required": True,
                             "require_user_context": require_user_context,
                         },
                     },
@@ -287,15 +386,21 @@ def run_server(
     rate_limit_max_requests: int = 60,
     rate_limit_window_seconds: int = 60,
     api_key: str | None = None,
+    api_key_previous: str | None = None,
     require_user_context: bool | None = None,
 ) -> ThreadingHTTPServer:
     configured_api_key = api_key
     if configured_api_key is None:
         configured_api_key = os.getenv("TUGAAGIL_API_KEY")
+    configured_previous = api_key_previous
+    if configured_previous is None:
+        configured_previous = os.getenv("TUGAAGIL_API_KEY_PREVIOUS")
 
     configured_require_user_context = require_user_context
     if configured_require_user_context is None:
-        configured_require_user_context = os.getenv("TUGAAGIL_REQUIRE_USER_CONTEXT", "").lower() in {
+        configured_require_user_context = os.getenv(
+            "TUGAAGIL_REQUIRE_USER_CONTEXT", ""
+        ).lower() in {
             "1",
             "true",
             "yes",
@@ -309,6 +414,7 @@ def run_server(
                 window_seconds=rate_limit_window_seconds,
             ),
             api_key=configured_api_key,
+            api_key_previous=configured_previous,
             require_user_context=configured_require_user_context,
         ),
     )
