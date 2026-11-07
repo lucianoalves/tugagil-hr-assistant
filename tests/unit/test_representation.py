@@ -31,3 +31,10 @@ def test_unassessable_job_is_not_reported_as_passed():
     )
     assert not result["comparable"]
     assert not result["passed"]
+
+
+def test_removing_negation_is_not_supported_by_substring():
+    source = CV + "\nI have not led 500 employees."
+    result = evaluate_variant(source, CV + "\nled 500 employees.", source, JOB)
+    assert not result["facts_supported"]
+    assert not result["passed"]

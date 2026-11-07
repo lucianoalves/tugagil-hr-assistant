@@ -52,7 +52,10 @@ def evaluate_variant(baseline: str, variant: str, linkedin: str, job: str) -> di
     def normalize(text: str) -> str:
         return re.sub(r"\s+", " ", text).strip().casefold()
 
-    sources = [normalize(baseline), normalize(linkedin)]
+    sources = [
+        {normalize(line.strip(" \t•-*")) for line in source.splitlines() if line.strip()}
+        for source in (baseline, linkedin)
+    ]
     evidence = []
     unsupported = []
     for number, line in enumerate(variant.splitlines(), start=1):
