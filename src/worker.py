@@ -116,6 +116,7 @@ class Worker:
                         request,
                     )
                 finally:
+                    tokens_in, tokens_out = provider.tokens_in, provider.tokens_out
                     provider.close()
         except ValueError as exc:
             # Controlled validation errors contain no raw model or document content.

@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from src.config import Settings
 from src.worker import Worker, classify_provider_failure
@@ -48,3 +48,30 @@ def test_classify_provider_quota_vs_generic_failure():
         RuntimeError("429 resource_exhausted")
     )
     assert "temporariamente" in classify_provider_failure(RuntimeError("connection reset"))
+
+
+def test_rejected_model_output_still_records_provider_tokens():
+    worker = make_worker()
+    worker.settings.gemini_api_key = "test-key"
+    worker.rpc.side_effect = [
+        {
+            "id": "task",
+            "lease_token": "token",
+            "operation": "cv_ai",
+            "billing_mode": "free",
+            "model": "test-model",
+            "content": {"cv_text": "Python"},
+        },
+        True,
+    ]
+    provider = Mock(tokens_in=120, tokens_out=30)
+    with (
+        patch("src.worker.GeminiProvider", return_value=provider),
+        patch("src.worker.analyze", side_effect=ValueError("Invalid evidence")),
+    ):
+        assert worker.once() is True
+    finish = worker.rpc.call_args_list[1].args[1]
+    assert finish["tokens_in"] == 120
+    assert finish["tokens_out"] == 30
+    assert finish["failure"] is not None
+    provider.close.assert_called_once()
