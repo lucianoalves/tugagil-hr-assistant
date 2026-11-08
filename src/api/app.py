@@ -22,6 +22,7 @@ from src.engine.documents import (
     split_linkedin_pack,
 )
 from src.engine.jobs import analyze_job
+from src.engine.representation import evaluate_variant
 from src.worker import Worker
 
 
@@ -41,6 +42,14 @@ class JobInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cv_text: str = Field(min_length=1, max_length=200000)
     job_text: str = Field(min_length=20, max_length=100000)
+
+
+class RepresentationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    baseline: str = Field(min_length=1, max_length=200000)
+    variant: str = Field(min_length=1, max_length=200000)
+    linkedin: str = Field(min_length=1, max_length=50000)
+    job: str = Field(min_length=20, max_length=100000)
 
 
 class DocumentInput(BaseModel):
@@ -177,6 +186,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def job(request: Request):
         body = await payload(request, JobInput)
         return await run_in_threadpool(analyze_job, body["cv_text"], body["job_text"])
+
+    @app.post("/api/representation/evaluate")
+    async def representation_evaluate(request: Request):
+        body = await payload(request, RepresentationInput)
+        return await run_in_threadpool(evaluate_variant, **body)
 
     @app.post("/api/extract")
     async def extract(request: Request):
