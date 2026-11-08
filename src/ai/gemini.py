@@ -62,6 +62,8 @@ class GeminiProvider:
     def __init__(self, key: str):
         if not key:
             raise ValueError("Configure GEMINI_API_KEY no backend")
+        self.tokens_in = 0
+        self.tokens_out = 0
         self.client = genai.Client(
             api_key=key,
             http_options=types.HttpOptions(
@@ -82,12 +84,15 @@ class GeminiProvider:
             ),
         )
         usage = response.usage_metadata
+        # Preserve provider usage even when downstream evidence/schema validation fails.
+        self.tokens_in = (usage.prompt_token_count or 0) if usage else 0
+        self.tokens_out = (
+            (usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0) if usage else 0
+        )
         return (
             response.text or "{}",
-            (usage.prompt_token_count or 0) if usage else 0,
-            ((usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0))
-            if usage
-            else 0,
+            self.tokens_in,
+            self.tokens_out,
         )
 
     def close(self) -> None:
