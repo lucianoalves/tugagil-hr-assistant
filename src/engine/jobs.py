@@ -10,6 +10,8 @@ import hashlib
 import re
 
 from src.engine.findings import excerpt
+from src.engine.parser import parse_profile
+from src.engine.scorer import score_profile
 
 SKILLS = {
     "python": ("python",),
@@ -162,3 +164,44 @@ def analyze_job(cv_text: str, job_text: str) -> dict:
             "Esta análise por regras reconhece um vocabulário limitado e não interpreta experiência equivalente.",
         ],
     }
+
+
+def score_job_application(
+    cv_text: str,
+    job_text: str,
+    linkedin_text: str = "",
+    *,
+    adapted: bool = False,
+) -> dict:
+    """Job-fit analysis plus a numeric ATS-style score for the application.
+
+    The overall blends profile readiness (CV + optional LinkedIn) with keyword
+    coverage against the job description. Gaps for mentor/recruiter messaging
+    are intentionally not packaged here.
+    """
+    analysis = analyze_job(cv_text, job_text)
+    scored = score_profile(
+        parse_profile(cv_text=cv_text, linkedin_text=linkedin_text or "")
+    )
+    demonstrated = analysis["coverage"]["demonstrated"]
+    not_demonstrated = analysis["coverage"]["not_demonstrated"]
+    assessable = demonstrated + not_demonstrated
+    coverage_ratio = (demonstrated / assessable) if assessable else None
+    profile_overall = float(scored["overall"])
+    if coverage_ratio is None:
+        overall = round(profile_overall, 2)
+    else:
+        overall = round(0.6 * profile_overall + 0.4 * (coverage_ratio * 100), 2)
+    score_payload = {
+        "overall": overall,
+        "modules": scored["modules"],
+        "weights": scored["weights"],
+        "job_fit": {
+            "coverage_ratio": coverage_ratio,
+            "profile_overall": profile_overall,
+            "adapted_cv": adapted,
+        },
+    }
+    if scored.get("potential_if_top_fixes") is not None:
+        score_payload["potential_if_top_fixes"] = scored["potential_if_top_fixes"]
+    return {**analysis, "score": score_payload}

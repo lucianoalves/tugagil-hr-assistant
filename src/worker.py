@@ -12,7 +12,7 @@ from src.ai.gemini import GeminiProvider
 from src.ai.service import analyze
 from src.api.server import validate_payload
 from src.config import Settings, get_settings
-from src.engine.jobs import analyze_job
+from src.engine.jobs import score_job_application
 
 
 def classify_provider_failure(exc: BaseException) -> str:
@@ -92,7 +92,14 @@ class Worker:
                 if status != 200:
                     raise ValueError("Não foi possível analisar este currículo")
             elif task["operation"] == "job_rules":
-                result = analyze_job(content["cv_text"], task["job_text"])
+                adapted = (task.get("adapted_cv_text") or "").strip()
+                cv_text = adapted or content["cv_text"]
+                result = score_job_application(
+                    cv_text,
+                    task["job_text"],
+                    content.get("linkedin_text", ""),
+                    adapted=bool(adapted),
+                )
             else:
                 if task["billing_mode"] == "paid" and not self.settings.llm_allow_paid:
                     raise ValueError("Chamadas pagas não autorizadas neste ambiente")
