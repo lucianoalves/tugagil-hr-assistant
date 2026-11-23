@@ -180,9 +180,7 @@ def score_job_application(
     are intentionally not packaged here.
     """
     analysis = analyze_job(cv_text, job_text)
-    scored = score_profile(
-        parse_profile(cv_text=cv_text, linkedin_text=linkedin_text or "")
-    )
+    scored = score_profile(parse_profile(cv_text=cv_text, linkedin_text=linkedin_text or ""))
     demonstrated = analysis["coverage"]["demonstrated"]
     not_demonstrated = analysis["coverage"]["not_demonstrated"]
     assessable = demonstrated + not_demonstrated
