@@ -59,9 +59,7 @@ class JobAnalysisTest(unittest.TestCase):
         self.assertEqual(without["coverage"]["demonstrated"], 0)
         self.assertEqual(with_adapted["coverage"]["demonstrated"], 2)
         self.assertTrue(with_adapted["score"]["job_fit"]["adapted_cv"])
-        self.assertGreater(
-            with_adapted["score"]["overall"], without["score"]["overall"]
-        )
+        self.assertGreater(with_adapted["score"]["overall"], without["score"]["overall"])
 
     def test_missing_linkedin_does_not_break_job_score(self):
         result = score_job_application(
